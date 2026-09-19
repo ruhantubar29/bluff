@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'core/language/language_settings.dart';
 import 'core/theme/bluff_theme.dart';
-import 'screens/home/home_screen.dart';
+import 'screens/splash/splash_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -21,7 +21,7 @@ class BluffApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       title: 'BLUFFᴮᴰ',
       theme: BluffTheme.light,
-      home: const HomeScreen(),
+      home: const SplashScreen(),
     );
   }
 }

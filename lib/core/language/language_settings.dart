@@ -11,7 +11,7 @@ class LanguageSettings {
   static const String _languageKey =
       'bluff.language';
 
-  AppLanguage _language = AppLanguage.bangla;
+  AppLanguage _language = AppLanguage.english;
 
   AppLanguage get language => _language;
 
@@ -22,10 +22,10 @@ class LanguageSettings {
     final savedLanguage =
         prefs.getString(_languageKey);
 
-    if (savedLanguage == 'en') {
-      _language = AppLanguage.english;
-    } else {
+    if (savedLanguage == 'bn') {
       _language = AppLanguage.bangla;
+    } else {
+      _language = AppLanguage.english;
     }
   }
 
