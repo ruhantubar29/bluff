@@ -1,17 +1,43 @@
-# bluff
+# BLUFFᴮᴰ
 
-A new Flutter project.
+### Party & Group Games
 
-## Getting Started
+BLUFFᴮᴰ is a collection of fun party and group games made for playing with friends, family, and everyone.
 
-This project is a starting point for a Flutter application.
+🌐 **Official Website:**  
+https://ruhantubar29.github.io/bluff/
 
-A few resources to get you started if this is your first Flutter project:
+📱 **Download:**  
+Visit the official website for the latest available version.
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+🎮 **Games:**  
+Impostor · Mafia · Would You Rather · Truth or Dare · Wrong Answer Only · Who Am I? · Perfect Circle · Chess · Never Have I Ever · Charades
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+---
+
+## About
+
+BLUFFᴮᴰ brings multiple party games together in one app, designed for quick, fun sessions with groups.
+
+The website is the main home for BLUFFᴮᴰ, including screenshots, game information, updates, versions, and downloads.
+
+---
+
+## Development
+
+Built with:
+
+- Flutter
+- Dart
+
+---
+
+## Links
+
+🌐 **Website:** https://ruhantubar29.github.io/bluff/
+
+💻 **GitHub:** https://github.com/ruhantubar29/bluff
+
+---
+
+**BLUFFᴮᴰ — Play • Laugh • Bluff • Repeat**
