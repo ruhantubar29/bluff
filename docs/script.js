@@ -1,544 +1,187 @@
+const REPO = "ruhantubar29/bluff";
+const RELEASES_URL = `https://github.com/${REPO}/releases`;
 const MAX_SCREENSHOTS = 30;
+const EXTENSIONS = ["png", "jpg", "jpeg", "webp"];
+
+const $ = (id) => document.getElementById(id);
+const track = $("screenshotTrack");
+const dots = $("dots");
+const prev = $("prevButton");
+const next = $("nextButton");
+const stage = $("heroStage");
+const toast = $("toast");
 
 
-const screenshotTrack =
-    document.getElementById("screenshotTrack");
+/* ---------- screenshots (ss1, ss2, ... in /images) ---------- */
 
-const dots =
-    document.getElementById("dots");
-
-const prevButton =
-    document.getElementById("prevButton");
-
-const nextButton =
-    document.getElementById("nextButton");
-
-
-let screenshots = [];
-
-let currentIndex = 0;
-
-
-
-/*
-    Check whether an image exists.
-*/
-
-function loadImage(src) {
-
-    return new Promise((resolve, reject) => {
-
+function probe(src) {
+    return new Promise((resolve) => {
         const img = new Image();
-
-        img.onload = () => resolve(img);
-
-        img.onerror = reject;
-
+        img.onload = () => resolve(true);
+        img.onerror = () => resolve(false);
         img.src = src;
-
     });
-
 }
 
-
-
-/*
-    Automatically find:
-
-        ss1
-        ss2
-        ss3
-        ss4
-        ...
-
-    Supports:
-
-        PNG
-        JPG
-        JPEG
-        WEBP
-*/
+async function findScreenshot(i) {
+    for (const ext of EXTENSIONS) {
+        const src = `images/ss${i}.${ext}`;
+        if (await probe(src)) return src;
+    }
+    return null;
+}
 
 async function findScreenshots() {
-
-    const found = [];
-
-
-    for (
-        let i = 1;
-        i <= MAX_SCREENSHOTS;
-        i++
-    ) {
-
-        const extensions = [
-            "png",
-            "jpg",
-            "jpeg",
-            "webp"
-        ];
-
-
-        for (const extension of extensions) {
-
-            const src =
-                `images/ss${i}.${extension}`;
-
-
-            try {
-
-                await loadImage(src);
-
-                found.push(src);
-
-                break;
-
-            } catch (_) {
-
-                // File doesn't exist.
-            }
-
-        }
-
-    }
-
-
-    return found;
+    const indexes = Array.from({ length: MAX_SCREENSHOTS }, (_, i) => i + 1);
+    const found = await Promise.all(indexes.map(findScreenshot));
+    return found.filter(Boolean);
 }
 
+function renderStage(list) {
+    if (!list.length) {
+        stage.innerHTML = '<img class="stage-icon" src="images/icon.png" alt="">';
+        stage.classList.add("ready");
+        return;
+    }
 
+    // center = first screenshot, then left, then right
+    const roles = ["center", "left", "right"];
+    stage.innerHTML = list.slice(0, 3)
+        .map((src, i) => `<div class="ph ph-${roles[i]}"><img src="${src}" alt=""></div>`)
+        .join("");
 
-/*
-    Display screenshots.
-*/
+    requestAnimationFrame(() => stage.classList.add("ready"));
+}
 
-function renderScreenshots() {
+function renderGallery(list) {
+    if (!list.length) {
+        track.innerHTML = '<div class="no-screenshots">Screenshots coming soon.</div>';
+        dots.innerHTML = "";
+        prev.disabled = true;
+        next.disabled = true;
+        return;
+    }
 
-    screenshotTrack.innerHTML = "";
-
+    track.innerHTML = "";
     dots.innerHTML = "";
 
+    list.forEach((src, i) => {
+        const img = document.createElement("img");
+        img.className = "screenshot";
+        img.src = src;
+        img.alt = `BLUFFBD screenshot ${i + 1}`;
+        img.loading = "lazy";
+        track.appendChild(img);
 
-    if (screenshots.length === 0) {
+        const dot = document.createElement("button");
+        dot.type = "button";
+        dot.className = "dot";
+        dot.setAttribute("aria-label", `Screenshot ${i + 1}`);
+        dot.onclick = () => track.children[i].scrollIntoView({ behavior: "smooth", inline: "start", block: "nearest" });
+        dots.appendChild(dot);
+    });
 
-        screenshotTrack.innerHTML = `
-            <div class="no-screenshots">
-                Upload&nbsp;
-                <strong>
-                    ss1.png, ss2.png, ss3.png…
-                </strong>
-                &nbsp;to docs/images/
-            </div>
-        `;
+    const update = () => {
+        const pad = parseFloat(getComputedStyle(track).paddingLeft) || 0;
+        const items = [...track.children];
+        let best = 0;
+        let bestDist = Infinity;
 
-        prevButton.disabled = true;
-
-        nextButton.disabled = true;
-
-        return;
-    }
-
-
-    screenshots.forEach(
-        (src, index) => {
-
-            const img =
-                document.createElement("img");
-
-
-            img.className =
-                "screenshot";
-
-
-            img.src = src;
-
-
-            img.alt =
-                `BLUFFᴮᴰ screenshot ${index + 1}`;
-
-
-            screenshotTrack.appendChild(img);
-
-
-
-            const dot =
-                document.createElement("button");
-
-
-            dot.className =
-                `dot ${
-                    index === 0
-                        ? "active"
-                        : ""
-                }`;
-
-
-            dot.setAttribute(
-                "aria-label",
-                `Go to screenshot ${index + 1}`
-            );
-
-
-            dot.addEventListener(
-                "click",
-                () => goTo(index)
-            );
-
-
-            dots.appendChild(dot);
-
-        }
-    );
-
-
-    prevButton.disabled = false;
-
-    nextButton.disabled = false;
-
-}
-
-
-
-/*
-    Move to screenshot.
-*/
-
-function goTo(index) {
-
-    if (!screenshots.length) {
-        return;
-    }
-
-
-    currentIndex =
-        Math.max(
-            0,
-            Math.min(
-                index,
-                screenshots.length - 1
-            )
-        );
-
-
-    const target =
-        screenshotTrack.children[
-            currentIndex
-        ];
-
-
-    if (target) {
-
-        target.scrollIntoView({
-
-            behavior: "smooth",
-
-            block: "nearest",
-
-            inline: "start"
-
+        items.forEach((el, i) => {
+            const dist = Math.abs(el.offsetLeft - pad - track.scrollLeft);
+            if (dist < bestDist) { bestDist = dist; best = i; }
         });
 
-    }
-
-
-    updateDots();
-}
-
-
-
-/*
-    Update carousel dots.
-*/
-
-function updateDots() {
-
-    [
-        ...dots.children
-    ].forEach(
-        (dot, index) => {
-
-            dot.classList.toggle(
-                "active",
-                index === currentIndex
-            );
-
-        }
-    );
-
-}
-
-
-
-/*
-    Previous / next buttons.
-*/
-
-prevButton.addEventListener(
-    "click",
-    () => goTo(currentIndex - 1)
-);
-
-
-nextButton.addEventListener(
-    "click",
-    () => goTo(currentIndex + 1)
-);
-
-
-
-/*
-    Keep dots synced with manual scrolling.
-*/
-
-screenshotTrack.addEventListener(
-    "scroll",
-    () => {
-
-        if (!screenshots.length) {
-            return;
-        }
-
-
-        const children =
-            [...screenshotTrack.children];
-
-
-        const left =
-            screenshotTrack.scrollLeft;
-
-
-        let closest = 0;
-
-        let distance = Infinity;
-
-
-        children.forEach(
-            (child, index) => {
-
-                const distanceHere =
-                    Math.abs(
-                        child.offsetLeft - left
-                    );
-
-
-                if (
-                    distanceHere < distance
-                ) {
-
-                    distance =
-                        distanceHere;
-
-                    closest =
-                        index;
-
-                }
-
-            }
-        );
-
-
-        currentIndex =
-            closest;
-
-
-        updateDots();
-
-    },
-    {
-        passive: true
-    }
-);
-
-
-
-/*
-    App icon fallback.
-
-    If icon.png doesn't exist yet,
-    the website displays the BLUFFᴮᴰ
-    text logo instead.
-*/
-
-const appIcon =
-    document.getElementById("appIcon");
-
-const iconFallback =
-    document.getElementById("iconFallback");
-
-const headerIcon =
-    document.getElementById("headerIcon");
-
-const headerIconFallback =
-    document.getElementById(
-        "headerIconFallback"
-    );
-
-
-appIcon.addEventListener(
-    "error",
-    () => {
-
-        appIcon.style.display =
-            "none";
-
-        iconFallback.style.display =
-            "grid";
-
-    }
-);
-
-
-appIcon.addEventListener(
-    "load",
-    () => {
-
-        iconFallback.style.display =
-            "none";
-
-    }
-);
-
-
-headerIcon.addEventListener(
-    "error",
-    () => {
-
-        headerIcon.style.display =
-            "none";
-
-        headerIconFallback.style.display =
-            "grid";
-
-    }
-);
-
-
-
-/*
-    About section:
-    See more / See less.
-*/
-
-const description =
-    document.getElementById(
-        "description"
-    );
-
-const seeMoreButton =
-    document.getElementById(
-        "seeMoreButton"
-    );
-
-
-seeMoreButton.addEventListener(
-    "click",
-    () => {
-
-        const expanded =
-            description.classList.toggle(
-                "expanded"
-            );
-
-
-        description.classList.toggle(
-            "collapsed",
-            !expanded
-        );
-
-
-        seeMoreButton.textContent =
-            expanded
-                ? "See less"
-                : "See more";
-
-    }
-);
-
-
-
-/*
-    Share button.
-
-    On supported phones/browsers:
-    opens the native share menu.
-
-    Otherwise:
-    copies the page URL.
-*/
-
-async function sharePage() {
-
-    const shareData = {
-
-        title:
-            "BLUFFᴮᴰ — Party Games",
-
-        text:
-            "Check out BLUFFᴮᴰ, a collection of party games!",
-
-        url:
-            window.location.href
-
+        [...dots.children].forEach((d, i) => d.classList.toggle("active", i === best));
+        prev.disabled = track.scrollLeft <= 4;
+        next.disabled = track.scrollLeft + track.clientWidth >= track.scrollWidth - 4;
     };
 
-
-    try {
-
-        if (navigator.share) {
-
-            await navigator.share(
-                shareData
-            );
-
-            return;
-        }
-
-
-        await navigator.clipboard.writeText(
-            window.location.href
-        );
-
-
-        alert(
-            "Page link copied!"
-        );
-
-    } catch (_) {
-
-        // User cancelled sharing.
-
-    }
-
+    const step = () => track.children[0].getBoundingClientRect().width + 18;
+    prev.onclick = () => track.scrollBy({ left: -step(), behavior: "smooth" });
+    next.onclick = () => track.scrollBy({ left: step(), behavior: "smooth" });
+    track.addEventListener("scroll", () => requestAnimationFrame(update), { passive: true });
+    window.addEventListener("resize", update);
+    update();
 }
 
-
-document
-    .getElementById("shareButton")
-    .addEventListener(
-        "click",
-        sharePage
-    );
+findScreenshots().then((list) => {
+    renderStage(list);
+    renderGallery(list);
+});
 
 
-document
-    .getElementById("heroShareButton")
-    .addEventListener(
-        "click",
-        sharePage
-    );
+/* ---------- latest release info from GitHub ---------- */
 
+function setInstall(url, note) {
+    document.querySelectorAll(".js-install").forEach((a) => (a.href = url));
+    if (note) document.querySelectorAll(".install-note").forEach((n) => (n.textContent = note));
+}
 
+async function loadRelease() {
+    try {
+        const res = await fetch(`https://api.github.com/repos/${REPO}/releases/latest`, {
+            headers: { Accept: "application/vnd.github+json" },
+        });
 
-/*
-    Start screenshot detection.
-*/
+        if (res.status === 404) {
+            // no release published yet
+            setInstall(RELEASES_URL, "Coming soon");
+            return;
+        }
+        if (!res.ok) return; // rate-limited etc: keep the default link
 
-findScreenshots().then(
-    found => {
+        const rel = await res.json();
+        const apk = (rel.assets || []).find((a) => /\.apk$/i.test(a.name));
 
-        screenshots =
-            found;
+        setInstall(apk ? apk.browser_download_url : rel.html_url);
 
-        renderScreenshots();
+        if (rel.tag_name) $("relVersion").textContent = rel.tag_name;
 
+        const date = rel.published_at
+            ? new Date(rel.published_at).toLocaleDateString("en", { month: "short", year: "numeric" })
+            : "";
+        const size = apk ? `${(apk.size / 1048576).toFixed(1)} MB` : "";
+
+        if (size || date) {
+            $("relSize").textContent = size || "—";
+            $("relDate").textContent = date || "—";
+            $("relFacts").hidden = false;
+        }
+
+        const line = [rel.tag_name, size, date && `Updated ${date}`].filter(Boolean).join("  ·  ");
+        if (line) {
+            $("releaseLine").textContent = line;
+            $("releaseLine").hidden = false;
+        }
+    } catch (e) {
+        /* offline: keep default links */
     }
-);
+}
+
+loadRelease();
+
+
+/* ---------- share ---------- */
+
+$("heroShareButton").addEventListener("click", async () => {
+    const data = { title: "BLUFFBD", text: "The ultimate collection of classic party games with friends.", url: location.href };
+
+    try {
+        if (navigator.share) {
+            await navigator.share(data);
+        } else {
+            await navigator.clipboard.writeText(location.href);
+            toast.classList.add("on");
+            setTimeout(() => toast.classList.remove("on"), 1800);
+        }
+    } catch (e) { /* cancelled */ }
+});
+
+
+/* ---------- mobile install dock ---------- */
+
+const dock = $("dock");
+new IntersectionObserver(([entry]) => {
+    dock.classList.toggle("on", !entry.isIntersecting);
+}, { threshold: 0.05 }).observe($("hero"));

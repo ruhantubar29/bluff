@@ -1,7 +1,83 @@
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 
 import '../models/impostor_player.dart';
 import '../models/impostor_settings.dart';
+
+class BluffColors {
+  static const ink = Color(0xFF12080B);
+  static const panel = Color(0xFF241118);
+  static const panel2 = Color(0xFF33171F);
+  static const line = Color(0xFF4A222D);
+
+  static const red = Color(0xFFF0364F);
+  static const redDeep = Color(0xFFA8162D);
+  static const redLight = Color(0xFFFF7A8C);
+
+  static const cream = Color(0xFFFFEFE3);
+  static const muted = Color(0xFFC39AA3);
+
+  static const gold = Color(0xFFFFC94A);
+  static const goldTint = Color(0x33FFC94A);
+
+  static const glow = Color(0x47F0364F);
+
+  static const avatars = [
+    Color(0xFFFFC94A),
+    Color(0xFF7FD6FF),
+    Color(0xFFFF8FB1),
+    Color(0xFF9BE28A),
+    Color(0xFFC9A7FF),
+  ];
+}
+
+TextStyle bluffDisplay(
+  double size, {
+  Color color = BluffColors.cream,
+  FontWeight weight = FontWeight.w800,
+  double letterSpacing = 0,
+}) {
+  return GoogleFonts.balooDa2(
+    fontSize: size,
+    fontWeight: weight,
+    color: color,
+    height: 1.1,
+    letterSpacing: letterSpacing,
+  );
+}
+
+TextStyle bluffBody(
+  double size, {
+  Color color = BluffColors.cream,
+  FontWeight w = FontWeight.w400,
+}) {
+  return GoogleFonts.hindSiliguri(
+    fontSize: size,
+    fontWeight: w,
+    color: color,
+  );
+}
+
+BoxDecoration bluffCard() {
+  return BoxDecoration(
+    color: BluffColors.panel,
+    borderRadius: BorderRadius.circular(22),
+    border: Border.all(
+      color: BluffColors.line,
+      width: 2,
+    ),
+    boxShadow: const [
+      BoxShadow(
+        color: BluffColors.ink,
+        offset: Offset(0, 5),
+      ),
+      BoxShadow(
+        color: BluffColors.line,
+        offset: Offset(0, 6),
+      ),
+    ],
+  );
+}
 
 class PlayerScreen extends StatefulWidget {
   const PlayerScreen({
@@ -15,358 +91,580 @@ class PlayerScreen extends StatefulWidget {
   State<PlayerScreen> createState() => _PlayerScreenState();
 }
 
+class _PlayerEntry {
+  _PlayerEntry(ImpostorPlayer player)
+      : id = _nextId++,
+        player = player.copyWith(),
+        controller = TextEditingController(
+          text: player.name,
+        );
+
+  static int _nextId = 0;
+
+  final int id;
+  final ImpostorPlayer player;
+  final TextEditingController controller;
+  final FocusNode focus = FocusNode();
+
+  void dispose() {
+    controller.dispose();
+    focus.dispose();
+  }
+}
+
 class _PlayerScreenState extends State<PlayerScreen> {
-  late List<ImpostorPlayer> _players;
+  final ScrollController _scroll = ScrollController();
 
-  int? _editingIndex;
-
-  final TextEditingController _controller =
-      TextEditingController();
-
-  final FocusNode _focusNode = FocusNode();
+  late final List<_PlayerEntry> _entries;
 
   @override
   void initState() {
     super.initState();
 
-    _players = widget.players
-        .map(
-          (player) => player.copyWith(),
-        )
+    _entries = widget.players
+        .map(_PlayerEntry.new)
         .toList();
+
+    while (_entries.length <
+        ImpostorSettings.minPlayers) {
+      _entries.add(
+        _PlayerEntry(
+          ImpostorPlayer(
+            name: 'Player ${_entries.length + 1}',
+          ),
+        ),
+      );
+    }
   }
 
   @override
   void dispose() {
-    _controller.dispose();
-    _focusNode.dispose();
+    _scroll.dispose();
+
+    for (final entry in _entries) {
+      entry.dispose();
+    }
+
     super.dispose();
   }
 
-  // --------------------------------------------------
-  // START EDITING
-  // --------------------------------------------------
+  bool get _canAdd =>
+      _entries.length <
+      ImpostorSettings.maxPlayers;
 
-  void _startEditing(int index) {
-    if (_editingIndex != null) {
-      _finishEditing();
+  bool get _canRemove =>
+      _entries.length >
+      ImpostorSettings.minPlayers;
+
+  void _add() {
+    if (!_canAdd) {
+      return;
     }
 
-    setState(() {
-      _editingIndex = index;
-      _controller.text = _players[index].name;
-    });
-
-    Future.delayed(
-      const Duration(milliseconds: 60),
-      () {
-        if (!mounted) {
-          return;
-        }
-
-        _focusNode.requestFocus();
-
-        _controller.selection =
-            TextSelection.fromPosition(
-          TextPosition(
-            offset: _controller.text.length,
-          ),
-        );
-      },
+    final entry = _PlayerEntry(
+      ImpostorPlayer(
+        name: 'Player ${_entries.length + 1}',
+      ),
     );
-  }
-
-  // --------------------------------------------------
-  // FINISH EDITING
-  // --------------------------------------------------
-
-  void _finishEditing() {
-    if (_editingIndex != null) {
-      final index = _editingIndex!;
-
-      final name = _controller.text.trim();
-
-      setState(() {
-        _players[index] = _players[index].copyWith(
-          name: name.isEmpty
-              ? 'Player ${index + 1}'
-              : name,
-        );
-
-        _editingIndex = null;
-      });
-    }
-  }
-
-  // --------------------------------------------------
-  // ADD PLAYER
-  // --------------------------------------------------
-
-  void _addPlayer() {
-    if (_players.length >=
-        ImpostorSettings.maxPlayers) {
-      return;
-    }
 
     setState(() {
-      _players.add(
-        ImpostorPlayer(
-          name: 'Player ${_players.length + 1}',
-        ),
-      );
+      _entries.add(entry);
     });
-  }
 
-  // --------------------------------------------------
-  // REMOVE PLAYER
-  // --------------------------------------------------
-
-  void _removePlayer(int index) {
-    if (_players.length <=
-        ImpostorSettings.minPlayers) {
-      return;
-    }
-
-    setState(() {
-      _players.removeAt(index);
-
-      if (_editingIndex == index) {
-        _editingIndex = null;
-      } else if (_editingIndex != null &&
-          _editingIndex! > index) {
-        _editingIndex = _editingIndex! - 1;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
       }
+
+      if (_scroll.hasClients) {
+        _scroll.animateTo(
+          _scroll.position.maxScrollExtent,
+          duration:
+              const Duration(milliseconds: 250),
+          curve: Curves.easeOut,
+        );
+      }
+
+      entry.focus.requestFocus();
     });
   }
 
-  // --------------------------------------------------
-  // DONE
-  // --------------------------------------------------
+  void _remove(_PlayerEntry entry) {
+    if (!_canRemove) {
+      return;
+    }
+
+    setState(() {
+      _entries.remove(entry);
+    });
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      entry.dispose();
+    });
+  }
 
   void _done() {
-    _finishEditing();
+    final players = <ImpostorPlayer>[];
 
-    Navigator.pop(
-      context,
-      _players,
-    );
+    for (var i = 0; i < _entries.length; i++) {
+      final entry = _entries[i];
+
+      final name = entry.controller.text.trim();
+
+      players.add(
+        entry.player.copyWith(
+          name: name.isEmpty
+              ? 'Player ${i + 1}'
+              : name,
+        ),
+      );
+    }
+
+    Navigator.of(context).pop(players);
   }
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-
-    final canAdd =
-        _players.length <
-            ImpostorSettings.maxPlayers;
+    final count = _entries.length;
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Players'),
-      ),
-      body: SafeArea(
-        child: Column(
-          children: [
-            // --------------------------------------------------
-            // PLAYER COUNT
-            // --------------------------------------------------
+      backgroundColor: BluffColors.ink,
+      body: Container(
+        decoration: const BoxDecoration(
+          gradient: RadialGradient(
+            center: Alignment(0.9, -1.1),
+            radius: 1.1,
+            colors: [
+              BluffColors.glow,
+              Color(0x00F0364F),
+            ],
+          ),
+        ),
+        child: SafeArea(
+          child: GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onTap: () {
+              FocusScope.of(context).unfocus();
+            },
+            child: Column(
+              children: [
+                // --------------------------------------------------
+                // HEADER
+                // --------------------------------------------------
 
-            Padding(
-              padding: const EdgeInsets.fromLTRB(
-                20,
-                12,
-                20,
-                8,
-              ),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      '${_players.length} Players',
-                      style: theme.textTheme.titleMedium
-                          ?.copyWith(
-                        fontWeight:
-                            FontWeight.bold,
-                      ),
-                    ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(
+                    18,
+                    14,
+                    18,
+                    0,
                   ),
-                  Text(
-                    '${ImpostorSettings.minPlayers}'
-                    '–'
-                    '${ImpostorSettings.maxPlayers}',
-                    style:
-                        theme.textTheme.bodyMedium,
-                  ),
-                ],
-              ),
-            ),
-
-            // --------------------------------------------------
-            // PLAYER LIST
-            // --------------------------------------------------
-
-            Expanded(
-              child: ListView.builder(
-                padding:
-                    const EdgeInsets.fromLTRB(
-                  20,
-                  8,
-                  20,
-                  10,
-                ),
-                itemCount: _players.length,
-                itemBuilder:
-                    (context, index) {
-                  final player =
-                      _players[index];
-
-                  final isEditing =
-                      _editingIndex == index;
-
-                  return Padding(
-                    padding:
-                        const EdgeInsets.only(
-                      bottom: 8,
-                    ),
-                    child: Card(
-                      child: ListTile(
-                        contentPadding:
-                            const EdgeInsets
-                                .symmetric(
-                          horizontal: 16,
-                          vertical: 5,
+                  child: Row(
+                    children: [
+                      Material(
+                        color: BluffColors.panel2,
+                        shape: const CircleBorder(
+                          side: BorderSide(
+                            color: BluffColors.line,
+                            width: 2,
+                          ),
                         ),
-
-                        // PLAYER NUMBER
-                        leading: CircleAvatar(
-                          child: Text(
-                            '${index + 1}',
-                            style:
-                                const TextStyle(
-                              fontWeight:
-                                  FontWeight.bold,
+                        child: InkWell(
+                          customBorder:
+                              const CircleBorder(),
+                          onTap: () {
+                            Navigator.of(context)
+                                .maybePop();
+                          },
+                          child: const SizedBox(
+                            width: 42,
+                            height: 42,
+                            child: Icon(
+                              Icons
+                                  .arrow_back_rounded,
+                              color:
+                                  BluffColors.cream,
+                              size: 22,
                             ),
                           ),
                         ),
+                      ),
 
-                        // PLAYER NAME
-                        title: isEditing
-                            ? TextField(
-                                controller:
-                                    _controller,
-                                focusNode:
-                                    _focusNode,
-                                autofocus:
-                                    true,
-                                textInputAction:
-                                    TextInputAction
-                                        .done,
-                                style:
-                                    const TextStyle(
-                                  fontSize: 18,
-                                ),
-                                decoration:
-                                    const InputDecoration(
-                                  border:
-                                      InputBorder.none,
-                                  hintText:
-                                      'Player name',
-                                ),
-                                onSubmitted:
-                                    (_) {
-                                  _finishEditing();
-                                },
-                              )
-                            : Text(
-                                player.name,
-                                style:
-                                    const TextStyle(
-                                  fontSize: 18,
-                                  fontWeight:
-                                      FontWeight.w600,
-                                ),
+                      const SizedBox(width: 12),
+
+                      Transform.rotate(
+                        angle: -0.035,
+                        child: Text(
+                          'Players',
+                          style: bluffDisplay(
+                            30,
+                          ).copyWith(
+                            shadows: const [
+                              Shadow(
+                                color:
+                                    BluffColors
+                                        .redDeep,
+                                offset:
+                                    Offset(0, 3),
                               ),
-
-                        // DELETE
-                        trailing: _players.length >
-                                ImpostorSettings
-                                    .minPlayers
-                            ? IconButton(
-                                onPressed:
-                                    () {
-                                  _removePlayer(
-                                    index,
-                                  );
-                                },
-                                icon:
-                                    const Icon(
-                                  Icons
-                                      .delete_outline_rounded,
-                                ),
-                              )
-                            : null,
-
-                        onTap: () {
-                          _startEditing(index);
-                        },
-                      ),
-                    ),
-                  );
-                },
-              ),
-            ),
-
-            // --------------------------------------------------
-            // BOTTOM BUTTONS
-            // --------------------------------------------------
-
-            Padding(
-              padding: const EdgeInsets.fromLTRB(
-                20,
-                8,
-                20,
-                20,
-              ),
-              child: Column(
-                children: [
-                  // ADD PLAYER
-                  SizedBox(
-                    width: double.infinity,
-                    height: 52,
-                    child: OutlinedButton.icon(
-                      onPressed:
-                          canAdd
-                              ? _addPlayer
-                              : null,
-                      icon: const Icon(
-                        Icons
-                            .add_circle_outline_rounded,
-                      ),
-                      label: const Text(
-                        'Add Player',
-                      ),
-                    ),
-                  ),
-
-                  const SizedBox(height: 10),
-
-                  // DONE
-                  SizedBox(
-                    width: double.infinity,
-                    height: 54,
-                    child: FilledButton(
-                      onPressed: _done,
-                      child: const Text(
-                        'DONE',
-                        style: TextStyle(
-                          fontWeight:
-                              FontWeight.bold,
-                          letterSpacing: 1,
+                            ],
+                          ),
                         ),
                       ),
-                    ),
+                    ],
                   ),
-                ],
+                ),
+
+                // --------------------------------------------------
+                // PLAYER COUNT
+                // --------------------------------------------------
+
+                Padding(
+                  padding:
+                      const EdgeInsets.fromLTRB(
+                    20,
+                    20,
+                    20,
+                    10,
+                  ),
+                  child: Row(
+                    mainAxisAlignment:
+                        MainAxisAlignment
+                            .spaceBetween,
+                    children: [
+                      Text(
+                        '$count Players',
+                        style: bluffDisplay(
+                          20,
+                          weight:
+                              FontWeight.w700,
+                        ),
+                      ),
+                      Text(
+                        '${ImpostorSettings.minPlayers}'
+                        '–'
+                        '${ImpostorSettings.maxPlayers}',
+                        style: bluffBody(
+                          14,
+                          color:
+                              BluffColors.muted,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+                // --------------------------------------------------
+                // PLAYER LIST
+                // --------------------------------------------------
+
+                Expanded(
+                  child: ListView.separated(
+                    controller: _scroll,
+                    padding:
+                        const EdgeInsets.fromLTRB(
+                      18,
+                      4,
+                      18,
+                      16,
+                    ),
+                    itemCount: count,
+                    separatorBuilder:
+                        (_, __) =>
+                            const SizedBox(
+                      height: 14,
+                    ),
+                    itemBuilder: (_, index) {
+                      return _PlayerRow(
+                        key: ValueKey(
+                          _entries[index].id,
+                        ),
+                        index: index,
+                        entry: _entries[index],
+                        canRemove:
+                            _canRemove,
+                        onRemove: () {
+                          _remove(
+                            _entries[index],
+                          );
+                        },
+                      );
+                    },
+                  ),
+                ),
+
+                // --------------------------------------------------
+                // BOTTOM ACTIONS
+                // --------------------------------------------------
+
+                Padding(
+                  padding:
+                      const EdgeInsets.fromLTRB(
+                    18,
+                    0,
+                    18,
+                    18,
+                  ),
+                  child: Column(
+                    children: [
+                      // ADD PLAYER
+                      SizedBox(
+                        width: double.infinity,
+                        height: 54,
+                        child:
+                            OutlinedButton.icon(
+                          onPressed:
+                              _canAdd
+                                  ? _add
+                                  : null,
+                          icon: const Icon(
+                            Icons
+                                .add_circle_outline_rounded,
+                            size: 22,
+                          ),
+                          label: Text(
+                            'Add Player',
+                            style: bluffDisplay(
+                              19,
+                              weight:
+                                  FontWeight.w700,
+                            ),
+                          ),
+                          style:
+                              OutlinedButton
+                                  .styleFrom(
+                            foregroundColor:
+                                BluffColors
+                                    .gold,
+                            disabledForegroundColor:
+                                BluffColors
+                                    .line,
+                            side: BorderSide(
+                              color: _canAdd
+                                  ? BluffColors
+                                      .gold
+                                  : BluffColors
+                                      .line,
+                              width: 2,
+                            ),
+                            shape:
+                                RoundedRectangleBorder(
+                              borderRadius:
+                                  BorderRadius
+                                      .circular(
+                                20,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+
+                      const SizedBox(height: 14),
+
+                      // DONE
+                      _ChunkyButton(
+                        label: 'DONE',
+                        onTap: _done,
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PlayerRow extends StatelessWidget {
+  const _PlayerRow({
+    super.key,
+    required this.index,
+    required this.entry,
+    required this.canRemove,
+    required this.onRemove,
+  });
+
+  final int index;
+  final _PlayerEntry entry;
+  final bool canRemove;
+  final VoidCallback onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    final avatarColor =
+        BluffColors.avatars[
+            index %
+                BluffColors.avatars.length];
+
+    return Container(
+      decoration: bluffCard(),
+      padding: const EdgeInsets.fromLTRB(
+        12,
+        10,
+        6,
+        10,
+      ),
+      child: Row(
+        children: [
+          // PLAYER NUMBER
+          Container(
+            width: 40,
+            height: 40,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: avatarColor,
+            ),
+            child: Text(
+              '${index + 1}',
+              style: bluffDisplay(
+                18,
+                color: BluffColors.ink,
+              ),
+            ),
+          ),
+
+          const SizedBox(width: 12),
+
+          // PLAYER NAME
+          Expanded(
+            child: TextField(
+              controller: entry.controller,
+              focusNode: entry.focus,
+              maxLength: 16,
+              textInputAction:
+                  TextInputAction.done,
+              textCapitalization:
+                  TextCapitalization.words,
+              cursorColor: BluffColors.gold,
+              style: bluffBody(
+                18,
+                w: FontWeight.w600,
+              ),
+              decoration: InputDecoration(
+                isDense: true,
+                border: InputBorder.none,
+                counterText: '',
+                hintText:
+                    'Player ${index + 1}',
+                hintStyle: bluffBody(
+                  18,
+                  color: BluffColors.muted,
+                ),
+              ),
+              onSubmitted: (_) {
+                FocusScope.of(context)
+                    .unfocus();
+              },
+            ),
+          ),
+
+          // DELETE
+          IconButton(
+            onPressed:
+                canRemove ? onRemove : null,
+            tooltip: 'Remove player',
+            icon: const Icon(
+              Icons
+                  .delete_outline_rounded,
+            ),
+            color: BluffColors.redLight,
+            disabledColor:
+                BluffColors.line,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ChunkyButton extends StatefulWidget {
+  const _ChunkyButton({
+    required this.label,
+    required this.onTap,
+  });
+
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  State<_ChunkyButton> createState() =>
+      _ChunkyButtonState();
+}
+
+class _ChunkyButtonState
+    extends State<_ChunkyButton> {
+  bool _down = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTapDown: (_) {
+        setState(() {
+          _down = true;
+        });
+      },
+      onTapUp: (_) {
+        setState(() {
+          _down = false;
+        });
+      },
+      onTapCancel: () {
+        setState(() {
+          _down = false;
+        });
+      },
+      onTap: widget.onTap,
+      child: SizedBox(
+        width: double.infinity,
+        height: 71,
+        child: Stack(
+          children: [
+            AnimatedPositioned(
+              duration:
+                  const Duration(
+                milliseconds: 80,
+              ),
+              top: _down ? 5 : 0,
+              left: 0,
+              right: 0,
+              child: AnimatedContainer(
+                duration:
+                    const Duration(
+                  milliseconds: 80,
+                ),
+                height: 64,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: BluffColors.red,
+                  borderRadius:
+                      BorderRadius.circular(22),
+                  border: Border.all(
+                    color:
+                        BluffColors.redLight,
+                    width: 2,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color:
+                          BluffColors.redDeep,
+                      offset: Offset(
+                        0,
+                        _down ? 2 : 7,
+                      ),
+                    ),
+                  ],
+                ),
+                child: Text(
+                  widget.label,
+                  style: bluffDisplay(
+                    24,
+                    letterSpacing: 1,
+                  ),
+                ),
               ),
             ),
           ],

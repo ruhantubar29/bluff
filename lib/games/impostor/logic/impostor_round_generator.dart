@@ -86,11 +86,9 @@ class ImpostorRoundGenerator {
     }
 
     final actualImpostorCount =
-        settings.randomImpostorCount
-            ? _random.nextInt(
-                settings.impostorCount + 1,
-              )
-            : settings.impostorCount;
+    settings.randomImpostorCount
+        ? _random.nextInt(players.length + 1)
+        : settings.impostorCount;
 
     final category = settings.categories[
       _random.nextInt(

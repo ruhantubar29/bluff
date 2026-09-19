@@ -83,8 +83,9 @@ class _ImpostorCountScreenState
   }
 
   bool _isAvailable(int count) {
-    return count <=
-        _maximumImpostors(widget.playerCount);
+    return count <= _maximumImpostors(
+      widget.playerCount,
+    );
   }
 
   void _selectCount(int count) {
@@ -108,10 +109,6 @@ class _ImpostorCountScreenState
       if (_selectedCount > maximum) {
         _selectedCount = maximum;
       }
-
-      if (_selectedCount > 3) {
-        _selectedCount = 3;
-      }
     });
   }
 
@@ -128,156 +125,270 @@ class _ImpostorCountScreenState
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.black,
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(
-            horizontal: 22,
-            vertical: 18,
+      backgroundColor: _BluffColors.ink,
+      body: Container(
+        decoration: const BoxDecoration(
+          gradient: RadialGradient(
+            center: Alignment(0.9, -1.1),
+            radius: 1.15,
+            colors: [
+              _BluffColors.glow,
+              Color(0x00F0364F),
+            ],
           ),
-          child: Column(
-            children: [
-              Row(
-                children: [
-                  IconButton(
-                    splashRadius: 24,
-                    onPressed: () {
-                      Navigator.pop(context);
-                    },
-                    icon: const Icon(
-                      Icons.arrow_back_ios_new_rounded,
-                      color: Colors.white,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  const Expanded(
-                    child: Text(
-                      'Impostors',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 34,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-
-              const SizedBox(height: 18),
-
-              _GlassCard(
-                radius: 22,
-                child: SwitchListTile(
-                  value: _randomEnabled,
-                  onChanged: _toggleRandom,
-                  activeThumbColor: Colors.white,
-                  activeTrackColor: Colors.white24,
-                  inactiveThumbColor: Colors.white54,
-                  inactiveTrackColor: Colors.white12,
-                  title: const Text(
-                    'Random impostor count',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 17,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  subtitle: Text(
-                    _randomEnabled
-                        ? 'The game can have 0 to the selected maximum'
-                        : 'Choose exactly how many impostors will sneak in',
-                    style: const TextStyle(
-                      color: Colors.white54,
-                    ),
-                  ),
-                ),
-              ),
-
-              const SizedBox(height: 20),
-
-              Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  _randomEnabled
-                      ? 'Maximum impostors'
-                      : 'Number of impostors',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 18,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-
-              const SizedBox(height: 10),
-
-              Expanded(
-                child: ListView.builder(
+        ),
+        child: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(
+              horizontal: 18,
+            ),
+            child: Column(
+              children: [
+                // HEADER
+                Padding(
                   padding: const EdgeInsets.only(
-                    bottom: 10,
+                    top: 14,
                   ),
-                  itemCount: _randomEnabled ? 3 : 6,
-                  itemBuilder: (context, index) {
-                    final count = index + 1;
-                    final available =
-                        _isAvailable(count);
-                    final selected =
-                        _selectedCount == count;
-
-                    return Padding(
-                      padding: const EdgeInsets.only(
-                        bottom: 8,
-                      ),
-                      child: _CountCard(
-                        count: count,
-                        selected: selected,
-                        available: available,
-                        randomEnabled: _randomEnabled,
-                        minimumPlayers:
-                            _minimumPlayersFor(count),
-                        onTap: () {
-                          _selectCount(count);
-                        },
-                      ),
-                    );
-                  },
-                ),
-              ),
-
-              const SizedBox(height: 14),
-
-              _GlassCard(
-                radius: 22,
-                onTap: _done,
-                child: Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.symmetric(
-                    vertical: 18,
-                  ),
-                  child: const Row(
-                    mainAxisAlignment:
-                        MainAxisAlignment.center,
+                  child: Row(
                     children: [
-                      Icon(
-                        Icons.check_rounded,
-                        color: Colors.white,
+                      Material(
+                        color: _BluffColors.panel2,
+                        shape: const CircleBorder(
+                          side: BorderSide(
+                            color: _BluffColors.line,
+                            width: 2,
+                          ),
+                        ),
+                        child: InkWell(
+                          customBorder:
+                              const CircleBorder(),
+                          onTap: () {
+                            Navigator.pop(context);
+                          },
+                          child: const SizedBox(
+                            width: 42,
+                            height: 42,
+                            child: Icon(
+                              Icons.arrow_back_rounded,
+                              color: _BluffColors.cream,
+                              size: 22,
+                            ),
+                          ),
+                        ),
                       ),
-                      SizedBox(width: 10),
-                      Text(
-                        'Done',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 18,
-                          fontWeight: FontWeight.w600,
+                      const SizedBox(width: 12),
+                      Transform.rotate(
+                        angle: -0.035,
+                        child: Text(
+                          'Impostors',
+                          style:
+                              _bluffDisplay(30).copyWith(
+                            shadows: const [
+                              Shadow(
+                                color:
+                                    _BluffColors.redDeep,
+                                offset: Offset(0, 3),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
                     ],
                   ),
                 ),
-              ),
 
-              const SizedBox(height: 10),
-            ],
+                const SizedBox(height: 22),
+
+                // RANDOM CARD
+                _RandomCard(
+                  value: _randomEnabled,
+                  onChanged: _toggleRandom,
+                ),
+
+                const SizedBox(height: 22),
+
+                // SECTION TITLE
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    _randomEnabled
+                        ? 'Random impostor count'
+                        : 'Number of impostors',
+                    style: _bluffDisplay(20).copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+
+                const SizedBox(height: 12),
+
+                // GRID
+                Expanded(
+                  child: AnimatedOpacity(
+                    duration:
+                        const Duration(milliseconds: 200),
+                    opacity:
+                        _randomEnabled ? 0.35 : 1,
+                    child: IgnorePointer(
+                      ignoring: _randomEnabled,
+                      child: GridView.builder(
+                        padding:
+                            const EdgeInsets.only(
+                          bottom: 14,
+                        ),
+                        gridDelegate:
+                            const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 3,
+                          crossAxisSpacing: 12,
+                          mainAxisSpacing: 12,
+                          childAspectRatio: 1,
+                        ),
+                        itemCount: 6,
+                        itemBuilder:
+                            (context, index) {
+                          final count = index + 1;
+
+                          return _CountCard(
+                            count: count,
+                            selected:
+                                _selectedCount ==
+                                    count,
+                            available:
+                                _isAvailable(count),
+                            randomEnabled:
+                                _randomEnabled,
+                            minimumPlayers:
+                                _minimumPlayersFor(
+                              count,
+                            ),
+                            onTap: () {
+                              _selectCount(count);
+                            },
+                          );
+                        },
+                      ),
+                    ),
+                  ),
+                ),
+
+                const SizedBox(height: 4),
+
+                // DONE
+                _DoneButton(
+                  onTap: _done,
+                ),
+
+                const SizedBox(height: 18),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _RandomCard extends StatelessWidget {
+  const _RandomCard({
+    required this.value,
+    required this.onChanged,
+  });
+
+  final bool value;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: _bluffCard(),
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(22),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(22),
+          onTap: () {
+            onChanged(!value);
+          },
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Row(
+              children: [
+                AnimatedContainer(
+                  duration:
+                      const Duration(milliseconds: 200),
+                  width: 44,
+                  height: 44,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: value
+                        ? _BluffColors.goldTint
+                        : _BluffColors.panel2,
+                    borderRadius:
+                        BorderRadius.circular(14),
+                  ),
+                  child: const Icon(
+                    Icons.casino_rounded,
+                    color: _BluffColors.cream,
+                    size: 23,
+                  ),
+                ),
+
+                const SizedBox(width: 12),
+
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment:
+                        CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Random impostor count',
+                        style: _bluffBody(
+                          16,
+                          weight:
+                              FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        'There could be no impostor — or everyone could be one',
+                        style: _bluffBody(
+                          13.5,
+                          color:
+                              _BluffColors.muted,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+                Switch(
+                  value: value,
+                  onChanged: onChanged,
+                  activeColor:
+                      _BluffColors.cream,
+                  activeTrackColor:
+                      _BluffColors.red,
+                  inactiveThumbColor:
+                      _BluffColors.muted,
+                  inactiveTrackColor:
+                      _BluffColors.panel2,
+                  trackOutlineColor:
+                      WidgetStateProperty
+                          .resolveWith(
+                    (states) {
+                      if (states.contains(
+                        WidgetState.selected,
+                      )) {
+                        return _BluffColors
+                            .redLight;
+                      }
+
+                      return _BluffColors.line;
+                    },
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -304,130 +415,254 @@ class _CountCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final title = randomEnabled
-        ? 'Up to $count ${count == 1 ? 'impostor' : 'impostors'}'
-        : '$count ${count == 1 ? 'impostor' : 'impostors'}';
+    final label =
+        count == 1 ? 'impostor' : 'impostors';
 
     final subtitle = available
         ? randomEnabled
-            ? count == 1
-                ? '0 or 1 impostor'
-                : '0 to $count impostors'
-            : 'Exactly $count ${count == 1 ? 'impostor' : 'impostors'}'
-        : 'Requires $minimumPlayers players';
+            ? 'possible'
+            : 'exactly $count'
+        : 'needs $minimumPlayers players';
 
-    return _GlassCard(
-      radius: 22,
-      onTap: available ? onTap : () {},
-      enabled: available,
-      selected: selected,
-      child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(
-          horizontal: 20,
-          vertical: 8,
+    return AnimatedContainer(
+      duration:
+          const Duration(milliseconds: 180),
+      curve: Curves.easeOutBack,
+      transformAlignment: Alignment.center,
+      transform: Matrix4.identity()
+        ..rotateZ(
+          selected ? -0.035 : 0,
+        )
+        ..scale(
+          selected ? 1.045 : 1,
+          selected ? 1.045 : 1,
+          1.0,
         ),
-        leading: AnimatedSwitcher(
-          duration: const Duration(
-            milliseconds: 220,
-          ),
-          child: !available
-              ? const Icon(
-                  Icons.lock_rounded,
-                  key: ValueKey('locked'),
-                  color: Colors.white24,
-                  size: 28,
-                )
-              : selected
-                  ? const Icon(
-                      Icons.check_circle_rounded,
-                      key: ValueKey('selected'),
-                      color: Colors.white,
-                      size: 30,
+      decoration: BoxDecoration(
+        color: selected
+            ? _BluffColors.red
+            : _BluffColors.panel2,
+        borderRadius:
+            BorderRadius.circular(20),
+        border: Border.all(
+          color: selected
+              ? _BluffColors.redLight
+              : _BluffColors.line,
+          width: 2,
+        ),
+        boxShadow: selected
+            ? const [
+                BoxShadow(
+                  color:
+                      _BluffColors.redDeep,
+                  offset: Offset(0, 5),
+                ),
+              ]
+            : const [],
+      ),
+      child: Opacity(
+        opacity: available ? 1 : 0.42,
+        child: Material(
+          color: Colors.transparent,
+          borderRadius:
+              BorderRadius.circular(20),
+          child: InkWell(
+            borderRadius:
+                BorderRadius.circular(20),
+            onTap:
+                available ? onTap : null,
+            child: Center(
+              child: Column(
+                mainAxisSize:
+                    MainAxisSize.min,
+                children: [
+                  if (!available)
+                    const Icon(
+                      Icons.lock_rounded,
+                      color:
+                          _BluffColors.muted,
+                      size: 27,
                     )
-                  : const Icon(
-                      Icons.radio_button_unchecked_rounded,
-                      key: ValueKey('unselected'),
-                      color: Colors.white54,
-                      size: 30,
+                  else
+                    Text(
+                      '$count',
+                      style:
+                          _bluffDisplay(38),
                     ),
-        ),
-        title: Text(
-          title,
-          style: TextStyle(
-            color: available
-                ? Colors.white
-                : Colors.white30,
-            fontSize: 18,
-            fontWeight: FontWeight.w600,
+
+                  const SizedBox(height: 2),
+
+                  Text(
+                    label,
+                    style: _bluffBody(
+                      12,
+                      color: selected
+                          ? _BluffColors.cream
+                          : _BluffColors.muted,
+                    ),
+                  ),
+
+                  const SizedBox(height: 3),
+
+                  Text(
+                    subtitle,
+                    textAlign:
+                        TextAlign.center,
+                    style: _bluffBody(
+                      11,
+                      color: selected
+                          ? _BluffColors.cream
+                          : _BluffColors.muted,
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ),
         ),
-        subtitle: Text(
-          subtitle,
-          style: TextStyle(
-            color: available
-                ? Colors.white54
-                : Colors.white24,
-          ),
-        ),
-        trailing: available && selected
-            ? const Icon(
-                Icons.done_rounded,
-                color: Colors.white,
-              )
-            : null,
       ),
     );
   }
 }
 
-class _GlassCard extends StatelessWidget {
-  const _GlassCard({
-    required this.radius,
-    required this.child,
-    this.onTap,
-    this.enabled = true,
-    this.selected = false,
+class _DoneButton extends StatelessWidget {
+  const _DoneButton({
+    required this.onTap,
   });
 
-  final double radius;
-  final Widget child;
-  final VoidCallback? onTap;
-  final bool enabled;
-  final bool selected;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(radius),
-        onTap: enabled ? onTap : null,
-        child: Container(
-          decoration: BoxDecoration(
-            borderRadius:
-                BorderRadius.circular(radius),
-            color: selected
-                ? Colors.white.withValues(
-                    alpha: 0.14,
-                  )
-                : Colors.white.withValues(
-                    alpha: enabled ? 0.08 : 0.035,
+    return SizedBox(
+      width: double.infinity,
+      height: 58,
+      child: Material(
+        color: _BluffColors.red,
+        borderRadius:
+            BorderRadius.circular(18),
+        child: InkWell(
+          borderRadius:
+              BorderRadius.circular(18),
+          onTap: onTap,
+          child: Container(
+            decoration: BoxDecoration(
+              borderRadius:
+                  BorderRadius.circular(18),
+              border: Border.all(
+                color:
+                    _BluffColors.redLight,
+                width: 2,
+              ),
+              boxShadow: const [
+                BoxShadow(
+                  color:
+                      _BluffColors.redDeep,
+                  offset: Offset(0, 5),
+                ),
+              ],
+            ),
+            child: const Center(
+              child: Row(
+                mainAxisSize:
+                    MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.check_rounded,
+                    color:
+                        _BluffColors.cream,
+                    size: 22,
                   ),
-            border: Border.all(
-              color: selected
-                  ? Colors.white.withValues(
-                      alpha: 0.28,
-                    )
-                  : Colors.white.withValues(
-                      alpha: enabled ? 0.12 : 0.05,
+                  SizedBox(width: 9),
+                  Text(
+                    'DONE',
+                    style: TextStyle(
+                      color:
+                          _BluffColors.cream,
+                      fontSize: 19,
+                      fontWeight:
+                          FontWeight.w800,
                     ),
+                  ),
+                ],
+              ),
             ),
           ),
-          child: child,
         ),
       ),
     );
   }
+}
+
+class _BluffColors {
+  static const ink =
+      Color(0xFF090708);
+
+  static const panel2 =
+      Color(0xFF171013);
+
+  static const line =
+      Color(0xFF392328);
+
+  static const red =
+      Color(0xFFD9273F);
+
+  static const redLight =
+      Color(0xFFF05A6D);
+
+  static const redDeep =
+      Color(0xFF7A1425);
+
+  static const cream =
+      Color(0xFFFFF3E1);
+
+  static const muted =
+      Color(0xFFB8A5A8);
+
+  static const glow =
+      Color(0x33F0364F);
+
+  static const goldTint =
+      Color(0x332C2110);
+}
+
+TextStyle _bluffDisplay(
+  double size, {
+  FontWeight weight =
+      FontWeight.w800,
+}) {
+  return TextStyle(
+    fontSize: size,
+    fontWeight: weight,
+    color: _BluffColors.cream,
+    letterSpacing: -0.4,
+  );
+}
+
+TextStyle _bluffBody(
+  double size, {
+  Color color =
+      _BluffColors.cream,
+  FontWeight weight =
+      FontWeight.w400,
+}) {
+  return TextStyle(
+    fontSize: size,
+    fontWeight: weight,
+    color: color,
+  );
+}
+
+BoxDecoration _bluffCard() {
+  return BoxDecoration(
+    color: _BluffColors.panel2,
+    borderRadius:
+        BorderRadius.circular(22),
+    border: Border.all(
+      color: _BluffColors.line,
+      width: 2,
+    ),
+  );
 }
 
 class ImpostorCountSelection {
