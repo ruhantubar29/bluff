@@ -11,7 +11,7 @@ class BluffTheme {
         brightness: Brightness.light,
       ),
 
-      fontFamily: 'Roboto',
+      fontFamily: 'NotoSans',
 
       appBarTheme: const AppBarTheme(
         centerTitle: true,
