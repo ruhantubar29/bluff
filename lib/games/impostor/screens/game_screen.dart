@@ -11,6 +11,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+import '../models/impostor_player.dart';
 import '../models/impostor_round.dart';
 import 'vote_screen.dart';
 
@@ -243,16 +244,29 @@ class _GameScreenState extends State<GameScreen> {
                   ),
                 const SizedBox(height: 20),
                 GestureDetector(
-                  onTap: () {
+                  onTap: () async {
                     Navigator.pop(sheetContext);
 
-                    Navigator.push(
+                    final updatedPlayers =
+                        await Navigator.push<
+                            List<ImpostorPlayer>
+                        >(
                       context,
                       MaterialPageRoute(
                         builder: (_) => VoteScreen(
                           round: round,
                         ),
                       ),
+                    );
+
+                    if (!mounted ||
+                        updatedPlayers == null) {
+                      return;
+                    }
+
+                    Navigator.pop(
+                      context,
+                      updatedPlayers,
                     );
                   },
                   child: _SketchBox(
@@ -1062,7 +1076,7 @@ class _SecretPanel extends StatelessWidget {
             ),
             if (hint != null) ...[
               const SizedBox(
-                height: 12,
+                height: 16,
               ),
               _SketchBox(
                 fill: _marker,
@@ -1072,15 +1086,15 @@ class _SecretPanel extends StatelessWidget {
                 seed: 13,
                 padding:
                     const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 2,
+                  horizontal: 16,
+                  vertical: 6,
                 ),
                 child: Text(
-                  hint!,
+                  'Hint: $hint',
                   textAlign: TextAlign.center,
                   style: _t(
-                    17,
-                    w: FontWeight.w600,
+                    22,
+                    w: FontWeight.w700,
                   ),
                 ),
               ),

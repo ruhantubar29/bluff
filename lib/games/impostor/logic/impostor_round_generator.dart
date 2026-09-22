@@ -37,10 +37,10 @@ class ImpostorRoundGenerator {
     return 1;
   }
 
-  ImpostorRound generate({
+  Future<ImpostorRound> generate({
     required ImpostorSettings settings,
     required List<ImpostorPlayer> players,
-  }) {
+  }) async {
     if (players.length != settings.playerCount) {
       throw ArgumentError(
         'Player count does not match settings.',
@@ -86,17 +86,21 @@ class ImpostorRoundGenerator {
     }
 
     final actualImpostorCount =
-    settings.randomImpostorCount
-        ? _random.nextInt(players.length + 1)
-        : settings.impostorCount;
+        settings.randomImpostorCount
+            ? _random.nextInt(
+                players.length + 1,
+              )
+            : settings.impostorCount;
 
-    final category = settings.categories[
-      _random.nextInt(
-        settings.categories.length,
-      )
-    ];
+    final category =
+        settings.categories[
+          _random.nextInt(
+            settings.categories.length,
+          )
+        ];
 
-    final word = ImpostorWordDeck.instance.next(
+    final word =
+        await ImpostorWordDeck.instance.next(
       language: settings.language,
       category: category,
     );
@@ -110,8 +114,35 @@ class ImpostorRoundGenerator {
         .take(actualImpostorCount)
         .toSet();
 
+    final List<int> startingPlayerCandidates;
+
+    if (settings.hintsEnabled) {
+      startingPlayerCandidates =
+          List<int>.generate(
+        players.length,
+        (index) => index,
+      );
+    } else {
+      startingPlayerCandidates =
+          List<int>.generate(
+        players.length,
+        (index) => index,
+      )
+              .where(
+                (index) =>
+                    !impostorIndexes.contains(
+                  index,
+                ),
+              )
+              .toList();
+    }
+
     final startingPlayerIndex =
-        _random.nextInt(players.length);
+        startingPlayerCandidates[
+          _random.nextInt(
+            startingPlayerCandidates.length,
+          )
+        ];
 
     return ImpostorRound(
       players: players,

@@ -430,14 +430,16 @@ class _CountCard extends StatelessWidget {
       curve: Curves.easeOutBack,
       transformAlignment: Alignment.center,
       transform: Matrix4.identity()
-        ..rotateZ(
-          selected ? -0.035 : 0,
-        )
-        ..scale(
-          selected ? 1.045 : 1,
-          selected ? 1.045 : 1,
-          1.0,
-        ),
+  ..rotateZ(
+    selected ? -0.035 : 0,
+  )
+  ..multiply(
+    Matrix4.diagonal3Values(
+      selected ? 1.045 : 1,
+      selected ? 1.045 : 1,
+      1.0,
+    ),
+  ),
       decoration: BoxDecoration(
         color: selected
             ? _BluffColors.red

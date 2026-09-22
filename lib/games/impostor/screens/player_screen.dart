@@ -164,6 +164,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     final entry = _PlayerEntry(
       ImpostorPlayer(
         name: 'Player ${_entries.length + 1}',
+        score: 0,
       ),
     );
 
@@ -200,6 +201,74 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       entry.dispose();
+    });
+  }
+
+  Future<void> _resetPoints() async {
+    FocusScope.of(context).unfocus();
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          backgroundColor: BluffColors.panel,
+          shape: RoundedRectangleBorder(
+            borderRadius:
+                BorderRadius.circular(22),
+            side: const BorderSide(
+              color: BluffColors.line,
+              width: 2,
+            ),
+          ),
+          title: Text(
+            'Reset Points?',
+            style: bluffDisplay(24),
+          ),
+          content: Text(
+            'All players will be set back to 0 points.',
+            style: bluffBody(
+              16,
+              color: BluffColors.muted,
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop(false);
+              },
+              child: Text(
+                'CANCEL',
+                style: bluffDisplay(
+                  15,
+                  color: BluffColors.muted,
+                ),
+              ),
+            ),
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop(true);
+              },
+              child: Text(
+                'RESET',
+                style: bluffDisplay(
+                  15,
+                  color: BluffColors.redLight,
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (!mounted || confirmed != true) {
+      return;
+    }
+
+    setState(() {
+      for (final entry in _entries) {
+        entry.player.score = 0;
+      }
     });
   }
 
@@ -248,10 +317,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
             },
             child: Column(
               children: [
-                // --------------------------------------------------
-                // HEADER
-                // --------------------------------------------------
-
                 Padding(
                   padding: const EdgeInsets.fromLTRB(
                     18,
@@ -289,9 +354,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                           ),
                         ),
                       ),
-
                       const SizedBox(width: 12),
-
                       Transform.rotate(
                         angle: -0.035,
                         child: Text(
@@ -314,10 +377,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
                     ],
                   ),
                 ),
-
-                // --------------------------------------------------
-                // PLAYER COUNT
-                // --------------------------------------------------
 
                 Padding(
                   padding:
@@ -354,10 +413,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   ),
                 ),
 
-                // --------------------------------------------------
-                // PLAYER LIST
-                // --------------------------------------------------
-
                 Expanded(
                   child: ListView.separated(
                     controller: _scroll,
@@ -393,10 +448,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   ),
                 ),
 
-                // --------------------------------------------------
-                // BOTTOM ACTIONS
-                // --------------------------------------------------
-
                 Padding(
                   padding:
                       const EdgeInsets.fromLTRB(
@@ -407,7 +458,49 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   ),
                   child: Column(
                     children: [
-                      // ADD PLAYER
+                      SizedBox(
+                        width: double.infinity,
+                        height: 50,
+                        child: OutlinedButton.icon(
+                          onPressed: _resetPoints,
+                          icon: const Icon(
+                            Icons
+                                .restart_alt_rounded,
+                            size: 21,
+                          ),
+                          label: Text(
+                            'Reset Points',
+                            style: bluffDisplay(
+                              18,
+                              weight:
+                                  FontWeight.w700,
+                            ),
+                          ),
+                          style:
+                              OutlinedButton
+                                  .styleFrom(
+                            foregroundColor:
+                                BluffColors.redLight,
+                            side:
+                                const BorderSide(
+                              color:
+                                  BluffColors.line,
+                              width: 2,
+                            ),
+                            shape:
+                                RoundedRectangleBorder(
+                              borderRadius:
+                                  BorderRadius
+                                      .circular(
+                                18,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+
+                      const SizedBox(height: 10),
+
                       SizedBox(
                         width: double.infinity,
                         height: 54,
@@ -461,7 +554,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
                       const SizedBox(height: 14),
 
-                      // DONE
                       _ChunkyButton(
                         label: 'DONE',
                         onTap: _done,
@@ -499,6 +591,8 @@ class _PlayerRow extends StatelessWidget {
             index %
                 BluffColors.avatars.length];
 
+    final score = entry.player.score;
+
     return Container(
       decoration: bluffCard(),
       padding: const EdgeInsets.fromLTRB(
@@ -509,7 +603,6 @@ class _PlayerRow extends StatelessWidget {
       ),
       child: Row(
         children: [
-          // PLAYER NUMBER
           Container(
             width: 40,
             height: 40,
@@ -529,7 +622,6 @@ class _PlayerRow extends StatelessWidget {
 
           const SizedBox(width: 12),
 
-          // PLAYER NAME
           Expanded(
             child: TextField(
               controller: entry.controller,
@@ -562,7 +654,39 @@ class _PlayerRow extends StatelessWidget {
             ),
           ),
 
-          // DELETE
+          // SCORE
+          Container(
+            constraints:
+                const BoxConstraints(
+              minWidth: 42,
+            ),
+            padding:
+                const EdgeInsets.symmetric(
+              horizontal: 8,
+              vertical: 6,
+            ),
+            decoration: BoxDecoration(
+              color: score == 0
+                  ? BluffColors.panel2
+                  : BluffColors.goldTint,
+              borderRadius:
+                  BorderRadius.circular(12),
+            ),
+            child: Text(
+              '$score',
+              textAlign: TextAlign.center,
+              style: bluffDisplay(
+                18,
+                color: score < 0
+                    ? BluffColors.redLight
+                    : BluffColors.gold,
+                weight: FontWeight.w800,
+              ),
+            ),
+          ),
+
+          const SizedBox(width: 2),
+
           IconButton(
             onPressed:
                 canRemove ? onRemove : null,
