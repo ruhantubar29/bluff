@@ -1,5 +1,12 @@
 const REPO = "ruhantubar29/bluff";
 const RELEASES_URL = `https://github.com/${REPO}/releases`;
+
+// Direct-to-APK link. GitHub resolves /releases/latest/download/<name> to
+// whichever asset sits on the newest *published* release, so Install always
+// starts a download instead of landing visitors on the releases page.
+// IMPORTANT: upload the APK under this exact filename on every release.
+const APK_NAME = "BLUFF.apk";
+const APK_URL = `${RELEASES_URL}/latest/download/${APK_NAME}`;
 const MAX_SCREENSHOTS = 30;
 const EXTENSIONS = ["png", "jpg", "jpeg", "webp"];
 
@@ -125,8 +132,9 @@ async function loadRelease() {
         });
 
         if (res.status === 404) {
-            // no release published yet
-            setInstall(RELEASES_URL, "Coming soon");
+            // No published release is visible yet. Keep the direct download
+            // link rather than bouncing visitors to the repo page.
+            setInstall(APK_URL);
             return;
         }
         if (!res.ok) return; // rate-limited etc: keep the default link
@@ -134,7 +142,10 @@ async function loadRelease() {
         const rel = await res.json();
         const apk = (rel.assets || []).find((a) => /\.apk$/i.test(a.name));
 
-        setInstall(apk ? apk.browser_download_url : rel.html_url);
+        // Prefer the exact asset URL when we found one; otherwise fall back to
+        // the stable /latest/download/ link. Either way Install downloads the
+        // APK directly and is never a repo redirect.
+        setInstall(apk ? apk.browser_download_url : APK_URL);
 
         if (rel.tag_name) $("relVersion").textContent = rel.tag_name;
 
