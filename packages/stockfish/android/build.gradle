@@ -1,0 +1,58 @@
+// Vendored copy of the stockfish plugin's android build script, updated for
+// modern Gradle/AGP: jcenter() (removed from Gradle) replaced by mavenCentral(),
+// AGP classpath bumped to match the app, lintOptions replaced by lint, and an
+// unconditional namespace for AGP 8+.
+group 'com.stockfish'
+version '1.0'
+
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+    }
+
+    dependencies {
+        classpath 'com.android.tools.build:gradle:9.4.1'
+    }
+}
+
+apply plugin: 'com.android.library'
+
+android {
+    namespace 'com.arjanaswal.stockfish'
+
+    compileSdk 35
+
+    defaultConfig {
+        minSdk 21
+    }
+
+    // NOTE: The CMake/native build is intentionally disabled. It compiled the
+    // full Stockfish engine from source and embedded its NNUE weights, adding
+    // ~326 MB of libstockfish.so to every APK (74% of the whole app).
+    //
+    // This is safe while chess is locked (lib/core/features.dart ->
+    // kChessEnabled = false):
+    //   * StockfishPlugin.java's onAttachedToEngine is an empty stub, so the
+    //     app never touches the engine at startup and cannot crash.
+    //   * The Dart bindings in lib/src/ffi.dart are top-level `final`s, which
+    //     Dart initializes lazily. DynamicLibrary.open('libstockfish.so') only
+    //     runs when the engine is first started - which the lock makes
+    //     unreachable.
+    //
+    // TO RE-ENABLE when chess ships: restore the `externalNativeBuild` blocks
+    // below and the abiFilters line, and the engine returns.
+    //
+    //     defaultConfig {
+    //         minSdk 21
+    //         ndk {
+    //             abiFilters 'arm64-v8a', 'armeabi-v7a', 'x86_64'
+    //         }
+    //         externalNativeBuild {
+    //             cmake { cppFlags '-std=c++17' }
+    //         }
+    //     }
+    //     externalNativeBuild {
+    //         cmake { path 'CMakeLists.txt' }
+    //     }
+}

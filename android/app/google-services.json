@@ -1,0 +1,62 @@
+{
+  "project_info": {
+    "project_number": "149296809595",
+    "project_id": "bluff-bd",
+    "storage_bucket": "bluff-bd.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:149296809595:android:2044f704ad036bac37c4de",
+        "android_client_info": {
+          "package_name": "com.example.bluff"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "149296809595-kc0306teasdp7r9mhk6sqf7s8kiov4ed.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.example.bluff",
+            "certificate_hash": "dacf8ce2ae56fe60ea8d008c223e97feb945ef05"
+          }
+        },
+        {
+          "client_id": "149296809595-rj1lbrbjrflcr1sd4sju5dqotee7gfet.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.example.bluff",
+            "certificate_hash": "edef7c0de917c974988571c0716fc9f001ca22a4"
+          }
+        },
+        {
+          "client_id": "149296809595-a2ka0oagfl1g24utoc8n5tap08f4gj0p.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDDqhVp4J_nOk4IUNOyUdM-j6FRSdiFc1k"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "149296809595-a2ka0oagfl1g24utoc8n5tap08f4gj0p.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "149296809595-d3mvlk2q5f42vsvh5tp5u6nnfpaacuek.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.bluff"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

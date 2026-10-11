@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+import '../../../core/profile/player_roster.dart';
+import '../../../core/profile/roster_chips.dart';
 import '../models/impostor_player.dart';
 import '../models/impostor_settings.dart';
 
@@ -289,7 +291,23 @@ class _PlayerScreenState extends State<PlayerScreen> {
       );
     }
 
+    // Remember the crew so the next game starts pre-filled.
+    PlayerRoster.instance.recordGame(
+      players.map((player) => player.name).toList(),
+    );
+
     Navigator.of(context).pop(players);
+  }
+
+  /// Roster chip tap: drops the name into the first empty row.
+  void _pickFromRoster(String name) {
+    for (final entry in _entries) {
+      if (entry.controller.text.trim().isEmpty) {
+        entry.controller.text = name;
+        setState(() {});
+        return;
+      }
+    }
   }
 
   @override
@@ -413,6 +431,19 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   ),
                 ),
 
+                Padding(
+                  padding:
+                      const EdgeInsets.fromLTRB(
+                    20,
+                    0,
+                    20,
+                    4,
+                  ),
+                  child: RosterChips(
+                    onPick: _pickFromRoster,
+                  ),
+                ),
+
                 Expanded(
                   child: ListView.separated(
                     controller: _scroll,
@@ -424,9 +455,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
                       16,
                     ),
                     itemCount: count,
-                    separatorBuilder:
-                        (_, __) =>
-                            const SizedBox(
+                    separatorBuilder: (_, _) =>
+                        const SizedBox(
                       height: 14,
                     ),
                     itemBuilder: (_, index) {

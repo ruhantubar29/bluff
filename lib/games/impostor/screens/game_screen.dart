@@ -10,6 +10,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/impostor_player.dart';
 import '../models/impostor_round.dart';
@@ -35,9 +36,12 @@ const _artColors = [
   _orange,
 ];
 
-// There are 20 character PNGs:
-// character_1.png ... character_20.png
-const int _characterCount = 20;
+// There are 35 character PNGs:
+// character_1.png ... character_35.png
+const int _characterCount = 35;
+
+const String _characterBagKey =
+    'bluff_impostor_character_bag_v1';
 
 TextStyle _t(
   double size, {
@@ -88,34 +92,76 @@ class _GameScreenState extends State<GameScreen> {
       (index) => index,
     )..shuffle(math.Random());
 
-    // Give each player one of the 20 characters.
-    characterIndexes = _buildCharacterIndexes(
-      round.players.length,
-    );
+    // Character indexes are loaded from the persistent
+    // 35-character cycle.
+    //
+    // We cannot make this async directly inside initState,
+    // so the actual character list is prepared below before
+    // the reveal screen is shown.
+    characterIndexes = [];
+    _loadCharacterIndexes();
   }
 
-  /// Gives every player a character.
-  ///
-  /// Characters are shuffled and won't repeat until all 20
-  /// characters have been used.
-  static List<int> _buildCharacterIndexes(int playerCount) {
+  Future<void> _loadCharacterIndexes() async {
+    final prefs = await SharedPreferences.getInstance();
+
+    final savedBag = prefs.getStringList(
+      _characterBagKey,
+    );
+
+    final bag = <int>[];
+
+    if (savedBag != null) {
+      for (final value in savedBag) {
+        final index = int.tryParse(value);
+
+        if (index != null &&
+            index >= 0 &&
+            index < _characterCount) {
+          bag.add(index);
+        }
+      }
+    }
+
     final random = math.Random();
 
     final result = <int>[];
-    var bag = <int>[];
 
-    for (var i = 0; i < playerCount; i++) {
+    for (var i = 0; i < round.players.length; i++) {
+      // The current cycle has run out.
+      //
+      // Start a completely new shuffled cycle of all 35.
       if (bag.isEmpty) {
-        bag = List<int>.generate(
-          _characterCount,
-          (index) => index,
-        )..shuffle(random);
+        bag.addAll(
+          List<int>.generate(
+            _characterCount,
+            (index) => index,
+          ),
+        );
+
+        bag.shuffle(random);
       }
 
-      result.add(bag.removeAt(0));
+      // Take one character from the remaining reserve.
+      result.add(
+        bag.removeLast(),
+      );
     }
 
-    return result;
+    // Save the remaining reserve so the cycle continues
+    // even after the app is closed/reopened.
+    await prefs.setStringList(
+      _characterBagKey,
+      bag.map((index) => index.toString()).toList(),
+    );
+
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      characterIndexes.addAll(result);
+    });
   }
 
   String _characterAsset(int characterIndex) {
@@ -135,6 +181,30 @@ class _GameScreenState extends State<GameScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // Wait only for the character reserve to load.
+    if (characterIndexes.length != round.players.length) {
+      return Scaffold(
+        backgroundColor: _red,
+        body: Stack(
+          children: [
+            const Positioned.fill(
+              child: CustomPaint(
+                painter: _DoodleBgPainter(),
+              ),
+            ),
+            SafeArea(
+              child: Center(
+                child: CircularProgressIndicator(
+                  color: _paper,
+                  strokeWidth: 3,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
     final playerIndex = currentPlayerIndex;
     final player = round.players[playerIndex];
 

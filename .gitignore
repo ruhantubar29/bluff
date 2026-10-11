@@ -43,3 +43,15 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Native build caches (CMake / NDK) — regenerated on every build
+.cxx/
+**/.cxx/
+/android/build/
+/android/.gradle/
+
+# Local release staging (the real APK ships as a GitHub Release asset)
+/dist/
+
+# Flutter ephemeral plugin registrants
+**/Flutter/ephemeral/

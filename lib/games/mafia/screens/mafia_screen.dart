@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/profile/player_roster.dart';
+import '../../../core/profile/roster_chips.dart';
 import 'role_screen.dart';
 
 class MafiaScreen extends StatefulWidget {
@@ -41,6 +43,15 @@ class _MafiaScreenState extends State<MafiaScreen> {
     });
   }
 
+  /// Roster chip tap: fills the input if empty, otherwise appends.
+  void pickFromRoster(String name) {
+    if (players.contains(name)) return;
+    setState(() {
+      players.add(name);
+      playerController.clear();
+    });
+  }
+
   void next() {
     if (players.length < 4) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -52,6 +63,9 @@ class _MafiaScreenState extends State<MafiaScreen> {
       );
       return;
     }
+
+    // Remember the crew for next time.
+    PlayerRoster.instance.recordGame(players);
 
     Navigator.push(
       context,
@@ -137,6 +151,10 @@ class _MafiaScreenState extends State<MafiaScreen> {
 
               const SizedBox(height: 20),
 
+              RosterChips(onPick: pickFromRoster),
+
+              const SizedBox(height: 20),
+
               Expanded(
                 child: players.isEmpty
                     ? Center(
@@ -149,7 +167,7 @@ class _MafiaScreenState extends State<MafiaScreen> {
                       )
                     : ListView.separated(
                         itemCount: players.length,
-                        separatorBuilder: (_, __) =>
+                        separatorBuilder: (_, _) =>
                             const SizedBox(height: 8),
                         itemBuilder: (context, index) {
                           return ListTile(

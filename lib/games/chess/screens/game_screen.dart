@@ -1,1885 +1,1226 @@
+import 'dart:async';
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
-import '../logic/chess_logic.dart';
-import '../widgets/chess_board.dart';
+import '../core/engine/chess_engine.dart';
+import '../core/game_clock.dart';
+import '../core/models/game_record.dart';
+import '../core/models/time_control.dart';
+import '../core/rating/elo.dart';
+import '../services/chess_storage.dart';
+import '../services/engine_runner.dart';
+import '../services/online_service.dart';
+import '../services/session_service.dart';
+import '../services/settings_service.dart';
+import '../services/sound_service.dart';
+import '../state/game_controller.dart';
+import '../widgets/board/chess_board_view.dart';
+import '../widgets/chess_theme.dart';
+import '../widgets/eval_bar.dart';
+import '../widgets/move_list.dart';
+import '../widgets/player_bar.dart';
 
-class ChessGameScreen extends StatefulWidget {
-  const ChessGameScreen({
+/// The live game table: board, clocks, move list, controls, result.
+///
+/// The screen owns a [GameController] for the whole match, persists the
+/// finished record (and rated rating changes) and drives the optional eval
+/// bar from the analysis engine.
+class GameScreen extends StatefulWidget {
+  const GameScreen({
     super.key,
+    required this.mode,
+    this.timeControl,
+    this.computerLevel,
+    this.computerIsWhite = false,
+    this.computerElo,
+    this.useStockfish = false,
+    this.whiteName,
+    this.blackName,
+    this.rated,
+    this.onReview,
+    this.liveGame,
+    this.localIsWhite = true,
+    this.opponentId,
+    this.opponentRating,
   });
 
+  final ChessGameMode mode;
+  final TimeControl? timeControl;
+  final EngineLevel? computerLevel;
+  final bool computerIsWhite;
+
+  /// Custom engine strength (Elo slider); overrides [computerLevel] preset.
+  final int? computerElo;
+
+  /// Prefer native Stockfish (falls back to the built-in engine).
+  final bool useStockfish;
+
+  final String? whiteName;
+  final String? blackName;
+
+  /// Defaults: computer games are rated against the engine's strength,
+  /// pass & play is not (shared account, no meaningful opponent rating).
+  final bool? rated;
+
+  /// Opens the finished game in the analysis/review board.
+  final void Function(ChessGameRecord record)? onReview;
+
+  /// The server channel for online games. When set, local moves are relayed
+  /// through it and its events (opponent moves, clocks, results) drive the
+  /// controller — the server is the authority.
+  final LiveGame? liveGame;
+
+  /// Online only: which side this device plays (server-assigned at match
+  /// time) and the opponent's identity/rating for the saved record.
+  final bool localIsWhite;
+  final String? opponentId;
+  final int? opponentRating;
+
   @override
-  State<ChessGameScreen> createState() =>
-      _ChessGameScreenState();
+  State<GameScreen> createState() => _GameScreenState();
 }
 
-class _ChessGameScreenState
-    extends State<ChessGameScreen> {
-  // ============================================================
-  // BOARD
-  // ============================================================
+class _GameScreenState extends State<GameScreen> {
+  GameController? _controller;
+  ChessGameRecord? _record;
+  bool _saved = false;
+  bool _resultShown = false;
+  String? _bootError;
 
-  late List<List<String>> board;
+  // Eval bar state.
+  int _evalCp = 0;
+  bool _evalMate = false;
+  int _evalMatePly = 0;
+  int _evalDepth = 0;
+  int _evalSeq = 0;
+  String? _lastEvalFen;
 
-  // ============================================================
-  // CHESS STATE
-  // ============================================================
+  // Low-time tick bookkeeping.
+  bool _whiteTicked = false;
+  bool _blackTicked = false;
 
-  late CastlingRights castlingRights;
+  // Online game bridge.
+  StreamSubscription<LiveGameEvent>? _liveSub;
+  bool _connectionLost = false;
+  bool _drawPromptOpen = false;
 
-  int? enPassantTargetRow;
-  int? enPassantTargetCol;
+  ChessSettings get _settings => ChessSettingsService.instance.settings;
 
-  // Number of half-moves since the last pawn move or capture.
-  int halfmoveClock = 0;
-
-  // ============================================================
-  // UI STATE
-  // ============================================================
-
-  int? selectedRow;
-  int? selectedCol;
-
-  List<List<int>> validMoves = [];
-
-  bool whiteTurn = true;
-
-  bool gameOver = false;
-
-  String winnerMessage = '';
-
-  // ============================================================
-  // HISTORY
-  // ============================================================
-
-  final List<String> moveHistory = [];
-
-  final List<_ChessState> _undoHistory = [];
-
-  // ============================================================
-  // REPETITION
-  // ============================================================
-
-  final Map<String, int> _positionOccurrences =
-      <String, int>{};
-
-  // ============================================================
-  // CAPTURED PIECES
-  // ============================================================
-
-  final List<String> capturedWhitePieces = [];
-
-  final List<String> capturedBlackPieces = [];
-
-  // ============================================================
-  // INIT
-  // ============================================================
+  bool get _showEvalBar =>
+      // Never show engine evaluation during a live online game — it would
+      // be a cheating aid against a human opponent.
+      _settings.showEvalBar && widget.mode != ChessGameMode.online;
 
   @override
   void initState() {
     super.initState();
-
-    board =
-        ChessLogic.createInitialBoard();
-
-    castlingRights =
-        CastlingRights.initial();
-
-    _resetPositionHistory();
+    SoundService.instance.preload();
+    _boot();
   }
 
-  // ============================================================
-  // RESET POSITION HISTORY
-  // ============================================================
+  Future<void> _boot() async {
+    try {
+      final profile = await SessionService.instance.current;
 
-  void _resetPositionHistory() {
-    _positionOccurrences.clear();
+      final level = widget.computerLevel;
+      final rated = widget.rated ?? widget.mode == ChessGameMode.computer;
+      final engineElo = widget.computerElo ?? level?.rating;
+      final category =
+          widget.timeControl?.ratingCategory ?? RatingCategory.rapid;
+      final profileRating = profile.rating(category);
 
-    final startingPosition =
-        _createPositionKey();
+      final whiteIsEngine =
+          widget.mode == ChessGameMode.computer && widget.computerIsWhite;
+      final online = widget.mode == ChessGameMode.online;
 
-    _positionOccurrences[
-        startingPosition] = 1;
-  }
+      final controller = GameController(
+        mode: widget.mode,
+        timeControl: widget.timeControl,
+        sound: SoundService.instance,
+        computerLevel: level,
+        computerIsWhite: widget.computerIsWhite,
+        onlineIsWhite: widget.localIsWhite,
+        computerElo: widget.computerElo,
+        useStockfish: widget.useStockfish,
+        whiteName:
+            widget.whiteName ??
+            (whiteIsEngine ? _engineName(level) : profile.displayName),
+        blackName:
+            widget.blackName ??
+            (!whiteIsEngine && widget.mode == ChessGameMode.computer
+                ? _engineName(level)
+                : widget.mode == ChessGameMode.computer
+                ? profile.displayName
+                : 'Player 2'),
+        rated: rated,
+        whiteId: whiteIsEngine
+            ? 'engine'
+            : online
+                ? (widget.localIsWhite ? profile.id : widget.opponentId)
+                : profile.id,
+        blackId: !whiteIsEngine && widget.mode == ChessGameMode.computer
+            ? 'engine'
+            : online
+                ? (widget.localIsWhite ? widget.opponentId : profile.id)
+                : profile.id,
+        whiteRatingBefore: whiteIsEngine
+            ? engineElo ?? Elo.startingRating
+            : online
+                ? (widget.localIsWhite
+                    ? profileRating
+                    : widget.opponentRating ?? profileRating)
+                : profileRating,
+        blackRatingBefore:
+            !whiteIsEngine && widget.mode == ChessGameMode.computer
+            ? engineElo ?? Elo.startingRating
+            : online
+                ? (widget.localIsWhite
+                    ? widget.opponentRating ?? profileRating
+                    : profileRating)
+                : profileRating,
+      );
 
-  // ============================================================
-  // CURRENT POSITION KEY
-  // ============================================================
+      controller.onFinished = _handleFinished;
+      controller.addListener(_onControllerChanged);
 
-  String _createPositionKey() {
-    return ChessLogic.createPositionKey(
-      board,
-      whiteTurn: whiteTurn,
-      castlingRights:
-          castlingRights,
-      enPassantTargetRow:
-          enPassantTargetRow,
-      enPassantTargetCol:
-          enPassantTargetCol,
-    );
-  }
-
-  // ============================================================
-  // RECORD POSITION
-  // ============================================================
-
-  void _recordCurrentPosition() {
-    final key =
-        _createPositionKey();
-
-    _positionOccurrences[key] =
-        (_positionOccurrences[key] ?? 0) + 1;
-  }
-
-  // ============================================================
-  // THREEFOLD REPETITION
-  // ============================================================
-
-  bool _isThreefoldRepetition() {
-    final key =
-        _createPositionKey();
-
-    return (_positionOccurrences[key] ?? 0) >= 3;
-  }
-
-  // ============================================================
-  // FIVEFOLD REPETITION
-  // ============================================================
-
-  bool _isFivefoldRepetition() {
-    final key =
-        _createPositionKey();
-
-    return (_positionOccurrences[key] ?? 0) >= 5;
-  }
-
-  // ============================================================
-  // 50-MOVE RULE
-  // ============================================================
-
-  bool _isFiftyMoveDraw() {
-    return halfmoveClock >= 100;
-  }
-
-  // ============================================================
-  // 75-MOVE RULE
-  // ============================================================
-
-  bool _isSeventyFiveMoveDraw() {
-    return halfmoveClock >= 150;
-  }
-
-  // ============================================================
-  // SQUARE TAP
-  // ============================================================
-
-  Future<void> onSquareTap(
-    int row,
-    int col,
-  ) async {
-    if (gameOver) {
-      return;
-    }
-
-    final piece =
-        board[row][col];
-
-    // ----------------------------------------------------------
-    // NOTHING SELECTED
-    // ----------------------------------------------------------
-
-    if (selectedRow == null ||
-        selectedCol == null) {
-      if (_isCorrectTurn(piece)) {
-        _selectPiece(
-          row,
-          col,
+      // Bridge the live server channel: relay local moves out, apply the
+      // server's events (opponent moves, clocks, offers, results) in.
+      final live = widget.liveGame;
+      if (live != null) {
+        controller.onLocalMove = (move) {
+          live
+              .playMove(
+                from: move.from,
+                to: move.to,
+                promotion: move.promotion,
+              )
+              .catchError((Object _) {
+            // Send failures surface as ConnectionLost from the service.
+          });
+        };
+        _liveSub = live.events.listen(
+          _onLiveEvent,
+          onError: (Object _) {
+            if (mounted) setState(() => _connectionLost = true);
+          },
+          onDone: () {
+            // A channel that closes after the game is over is not a
+            // connection problem — only a mid-game close is.
+            if (mounted && !controller.finished) {
+              setState(() => _connectionLost = true);
+            }
+          },
         );
       }
 
-      return;
-    }
+      // Put the human at the bottom when they chose Black (preference).
+      if (widget.mode == ChessGameMode.computer &&
+          widget.computerIsWhite &&
+          _settings.flipBoardWithColor) {
+        controller.flipped = true;
+      }
+      // Online: always seat the local player at the bottom of the board.
+      if (online && !widget.localIsWhite) {
+        controller.flipped = true;
+      }
 
-    // ----------------------------------------------------------
-    // SELECT ANOTHER OWN PIECE
-    // ----------------------------------------------------------
-
-    if (_isCorrectTurn(piece)) {
-      _selectPiece(
-        row,
-        col,
-      );
-
-      return;
-    }
-
-    // ----------------------------------------------------------
-    // INVALID DESTINATION
-    // ----------------------------------------------------------
-
-    if (!_isValidMoveSquare(
-      row,
-      col,
-    )) {
-      _clearSelection();
-      return;
-    }
-
-    final fromRow =
-        selectedRow!;
-
-    final fromCol =
-        selectedCol!;
-
-    final movingPiece =
-        board[fromRow][fromCol];
-
-    final capturedPiece =
-        board[row][col];
-
-    // ----------------------------------------------------------
-    // EN PASSANT
-    // ----------------------------------------------------------
-
-    final isEnPassant =
-        movingPiece[1] == 'p' &&
-            capturedPiece.isEmpty &&
-            fromCol != col &&
-            row == enPassantTargetRow &&
-            col == enPassantTargetCol;
-
-    // ----------------------------------------------------------
-    // GET EN PASSANT CAPTURED PIECE
-    // ----------------------------------------------------------
-
-    String actualCapturedPiece =
-        capturedPiece;
-
-    if (isEnPassant) {
-      final capturedPawnRow =
-          ChessLogic.isWhitePiece(
-            movingPiece,
-          )
-              ? row + 1
-              : row - 1;
-
-      actualCapturedPiece =
-          board[capturedPawnRow][col];
-    }
-
-    // ----------------------------------------------------------
-    // SAVE STATE
-    // ----------------------------------------------------------
-
-    final previousState =
-        _createCurrentState();
-
-    // ----------------------------------------------------------
-    // SAVE DATA NEEDED FOR SAN
-    // ----------------------------------------------------------
-
-    final legalMovesForPiece =
-        ChessLogic.getValidMoves(
-      board,
-      fromRow,
-      fromCol,
-      castlingRights:
-          castlingRights,
-      enPassantTargetRow:
-          enPassantTargetRow,
-      enPassantTargetCol:
-          enPassantTargetCol,
-    );
-
-    // ----------------------------------------------------------
-    // PROMOTION
-    // ----------------------------------------------------------
-
-    String? promotionPiece;
-
-    final reachesPromotionRank =
-        (movingPiece == 'wp' &&
-                row == 0) ||
-            (movingPiece == 'bp' &&
-                row == 7);
-
-    if (reachesPromotionRank) {
-      promotionPiece =
-          await _showPromotionDialog(
-        white:
-            ChessLogic.isWhitePiece(
-          movingPiece,
-        ),
-      );
+      controller.startGame();
 
       if (!mounted) {
+        controller.dispose();
         return;
       }
-
-      if (promotionPiece == null) {
-        return;
-      }
+      setState(() => _controller = controller);
+      _requestEval();
+    } catch (error) {
+      if (mounted) setState(() => _bootError = '$error');
     }
-
-    // ----------------------------------------------------------
-    // MAKE MOVE
-    // ----------------------------------------------------------
-
-    final moved =
-        ChessLogic.makeMove(
-      board,
-      fromRow,
-      fromCol,
-      row,
-      col,
-      castlingRights:
-          castlingRights,
-      enPassantTargetRow:
-          enPassantTargetRow,
-      enPassantTargetCol:
-          enPassantTargetCol,
-    );
-
-    if (!moved) {
-      _clearSelection();
-      return;
-    }
-
-    // ----------------------------------------------------------
-    // SAVE UNDO
-    // ----------------------------------------------------------
-
-    _undoHistory.add(
-      previousState,
-    );
-
-    // ----------------------------------------------------------
-    // PROMOTION
-    // ----------------------------------------------------------
-
-    if (promotionPiece != null) {
-      board[row][col] =
-          promotionPiece;
-    }
-
-    // ----------------------------------------------------------
-    // CAPTURE
-    // ----------------------------------------------------------
-
-    if (actualCapturedPiece.isNotEmpty) {
-      if (ChessLogic.isWhitePiece(
-        actualCapturedPiece,
-      )) {
-        capturedWhitePieces.add(
-          actualCapturedPiece,
-        );
-      } else {
-        capturedBlackPieces.add(
-          actualCapturedPiece,
-        );
-      }
-    }
-
-    // ----------------------------------------------------------
-    // UPDATE 50/75 MOVE COUNTER
-    // ----------------------------------------------------------
-
-    final isPawnMove =
-        movingPiece[1] == 'p';
-
-    final isCapture =
-        actualCapturedPiece.isNotEmpty;
-
-    if (isPawnMove || isCapture) {
-      halfmoveClock = 0;
-    } else {
-      halfmoveClock++;
-    }
-
-    // ----------------------------------------------------------
-    // UPDATE EN PASSANT
-    // ----------------------------------------------------------
-
-    int? newEnPassantRow;
-    int? newEnPassantCol;
-
-    if (movingPiece[1] == 'p' &&
-        (row - fromRow).abs() == 2) {
-      newEnPassantRow =
-          (fromRow + row) ~/ 2;
-
-      newEnPassantCol =
-          fromCol;
-    }
-
-    enPassantTargetRow =
-        newEnPassantRow;
-
-    enPassantTargetCol =
-        newEnPassantCol;
-
-    // ----------------------------------------------------------
-    // CHANGE TURN
-    // ----------------------------------------------------------
-
-    final nextSideToMove =
-        !whiteTurn;
-
-    whiteTurn =
-        nextSideToMove;
-
-    // ----------------------------------------------------------
-    // CREATE SAN MOVE TEXT
-    // ----------------------------------------------------------
-
-    final moveText =
-        _createSanMoveText(
-      piece: movingPiece,
-      fromRow: fromRow,
-      fromCol: fromCol,
-      toRow: row,
-      toCol: col,
-      capturedPiece:
-          actualCapturedPiece,
-      isEnPassant:
-          isEnPassant,
-      promotionPiece:
-          promotionPiece,
-      legalMovesForPiece:
-          legalMovesForPiece,
-    );
-
-    moveHistory.add(
-      moveText,
-    );
-
-    // ----------------------------------------------------------
-    // RECORD NEW POSITION
-    // ----------------------------------------------------------
-
-    _recordCurrentPosition();
-
-    // ----------------------------------------------------------
-    // UPDATE UI
-    // ----------------------------------------------------------
-
-    setState(() {
-      selectedRow = null;
-      selectedCol = null;
-
-      validMoves = [];
-    });
-
-    // ----------------------------------------------------------
-    // CHECK RESULT
-    // ----------------------------------------------------------
-
-    _checkGameResult(
-      whiteTurn,
-    );
   }
 
-  // ============================================================
-  // SELECT PIECE
-  // ============================================================
+  static String _engineName(EngineLevel? level) =>
+      'Computer · ${level?.displayName ?? 'Medium'}';
 
-  void _selectPiece(
-    int row,
-    int col,
-  ) {
-    final moves =
-        ChessLogic.getValidMoves(
-      board,
-      row,
-      col,
-      castlingRights:
-          castlingRights,
-      enPassantTargetRow:
-          enPassantTargetRow,
-      enPassantTargetCol:
-          enPassantTargetCol,
-    );
-
-    setState(() {
-      selectedRow = row;
-      selectedCol = col;
-      validMoves = moves;
-    });
+  @override
+  void dispose() {
+    _liveSub?.cancel();
+    // Leaving the screen releases the channel; the server resolves the
+    // game by its own clock if the player simply walked away.
+    widget.liveGame?.close();
+    final controller = _controller;
+    if (controller != null) {
+      controller.removeListener(_onControllerChanged);
+      controller.dispose();
+    }
+    super.dispose();
   }
 
-  // ============================================================
-  // CLEAR SELECTION
-  // ============================================================
-
-  void _clearSelection() {
-    setState(() {
-      selectedRow = null;
-      selectedCol = null;
-      validMoves = [];
-    });
-  }
-
-  // ============================================================
-  // TURN
-  // ============================================================
-
-  bool _isCorrectTurn(
-    String piece,
-  ) {
-    if (piece.isEmpty) {
-      return false;
-    }
-
-    return ChessLogic.isWhitePiece(
-          piece,
-        ) ==
-        whiteTurn;
-  }
-
-  // ============================================================
-  // VALID MOVE
-  // ============================================================
-
-  bool _isValidMoveSquare(
-    int row,
-    int col,
-  ) {
-    return validMoves.any(
-      (move) =>
-          move[0] == row &&
-          move[1] == col,
-    );
-  }
-
-  // ============================================================
-  // PROMOTION DIALOG
-  // ============================================================
-
-  Future<String?> _showPromotionDialog({
-    required bool white,
-  }) {
-    final pieces = [
-      'q',
-      'r',
-      'b',
-      'n',
-    ];
-
-    return showDialog<String>(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text(
-            'Promote Pawn',
-            style: TextStyle(
-              fontWeight:
-                  FontWeight.bold,
-            ),
-          ),
-          content: Column(
-            mainAxisSize:
-                MainAxisSize.min,
-            children: [
-              const Text(
-                'Choose a piece:',
-              ),
-              const SizedBox(
-                height: 16,
-              ),
-              Row(
-                mainAxisAlignment:
-                    MainAxisAlignment
-                        .spaceEvenly,
-                children:
-                    pieces.map(
-                  (type) {
-                    final piece =
-                        '${white ? 'w' : 'b'}$type';
-
-                    return GestureDetector(
-                      onTap: () {
-                        Navigator.pop(
-                          context,
-                          piece,
-                        );
-                      },
-                      child: Container(
-                        width: 55,
-                        height: 65,
-                        padding:
-                            const EdgeInsets
-                                .all(5),
-                        decoration:
-                            BoxDecoration(
-                          border:
-                              Border.all(
-                            color:
-                                Theme.of(
-                              context,
-                            ).dividerColor,
-                          ),
-                          borderRadius:
-                              BorderRadius
-                                  .circular(
-                            10,
-                          ),
-                        ),
-                        child:
-                            Image.asset(
-                          'assets/images/chess/pieces/$piece.png',
-                          fit: BoxFit
-                              .contain,
-                        ),
-                      ),
-                    );
-                  },
-                ).toList(),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  // ============================================================
-  // SAN MOVE TEXT
-  // ============================================================
-
-  String _createSanMoveText({
-    required String piece,
-    required int fromRow,
-    required int fromCol,
-    required int toRow,
-    required int toCol,
-    required String capturedPiece,
-    required bool isEnPassant,
-    required String? promotionPiece,
-    required List<List<int>> legalMovesForPiece,
-  }) {
-    // ----------------------------------------------------------
-    // CASTLING
-    // ----------------------------------------------------------
-
-    if (piece[1] == 'k' &&
-        (toCol - fromCol).abs() == 2) {
-      final isKingSide =
-          toCol > fromCol;
-
-      final notation =
-          isKingSide
-              ? 'O-O'
-              : 'O-O-O';
-
-      return _addCheckSuffix(
-        notation,
-      );
-    }
-
-    final type =
-        piece[1];
-
-    final isPawn =
-        type == 'p';
-
-    final isCapture =
-        capturedPiece.isNotEmpty ||
-            isEnPassant;
-
-    // ----------------------------------------------------------
-    // PAWN
-    // ----------------------------------------------------------
-
-    if (isPawn) {
-      String result = '';
-
-      if (isCapture) {
-        result +=
-            _fileName(fromCol);
-        result += 'x';
-      }
-
-      result +=
-          _squareName(
-        toRow,
-        toCol,
-      );
-
-      if (promotionPiece != null) {
-        result +=
-            '=${promotionPiece[1].toUpperCase()}';
-      }
-
-      return _addCheckSuffix(
-        result,
-      );
-    }
-
-    // ----------------------------------------------------------
-    // PIECE
-    // ----------------------------------------------------------
-
-    const pieceNames = {
-      'n': 'N',
-      'b': 'B',
-      'r': 'R',
-      'q': 'Q',
-      'k': 'K',
-    };
-
-    final symbol =
-        pieceNames[type] ?? '';
-
-    String disambiguation =
-        '';
-
-    if (type != 'k') {
-      disambiguation =
-          _getDisambiguation(
-        piece,
-        fromRow,
-        fromCol,
-        toRow,
-        toCol,
-      );
-    }
-
-    String result =
-        '$symbol'
-        '$disambiguation'
-        '${isCapture ? 'x' : ''}'
-        '${_squareName(toRow, toCol)}';
-
-    return _addCheckSuffix(
-      result,
-    );
-  }
-
-  // ============================================================
-  // SAN DISAMBIGUATION
-  // ============================================================
-
-  String _getDisambiguation(
-    String movingPiece,
-    int fromRow,
-    int fromCol,
-    int toRow,
-    int toCol,
-  ) {
-    final candidates =
-        <List<int>>[];
-
-    final movingWhite =
-        ChessLogic.isWhitePiece(
-      movingPiece,
-    );
-
-    for (int row = 0;
-        row < 8;
-        row++) {
-      for (int col = 0;
-          col < 8;
-          col++) {
-        if (row == fromRow &&
-            col == fromCol) {
-          continue;
-        }
-
-        final candidate =
-            board[row][col];
-
-        if (candidate !=
-            movingPiece) {
-          continue;
-        }
-
-        if (ChessLogic.isWhitePiece(
-              candidate,
-            ) !=
-            movingWhite) {
-          continue;
-        }
-
-        final moves =
-            ChessLogic.getValidMoves(
-          board,
-          row,
-          col,
-          castlingRights:
-              castlingRights,
-          enPassantTargetRow:
-              enPassantTargetRow,
-          enPassantTargetCol:
-              enPassantTargetCol,
-        );
-
-        final canReach =
-            moves.any(
-          (move) =>
-              move[0] == toRow &&
-              move[1] == toCol,
-        );
-
-        if (canReach) {
-          candidates.add([
-            row,
-            col,
-          ]);
-        }
-      }
-    }
-
-    if (candidates.isEmpty) {
-      return '';
-    }
-
-    final sameFile =
-        candidates.any(
-      (square) =>
-          square[1] == fromCol,
-    );
-
-    final sameRank =
-        candidates.any(
-      (square) =>
-          square[0] == fromRow,
-    );
-
-    if (!sameFile) {
-      return _fileName(
-        fromCol,
-      );
-    }
-
-    if (!sameRank) {
-      return _rankName(
-        fromRow,
-      );
-    }
-
-    return _squareName(
-      fromRow,
-      fromCol,
-    );
-  }
-
-  // ============================================================
-  // CHECK / CHECKMATE SUFFIX
-  // ============================================================
-
-  String _addCheckSuffix(
-    String notation,
-  ) {
-    final sideThatMoved =
-        !whiteTurn;
-
-    final opponent =
-        whiteTurn;
-
-    if (ChessLogic.isCheckmate(
-      board,
-      opponent,
-      castlingRights:
-          castlingRights,
-      enPassantTargetRow:
-          enPassantTargetRow,
-      enPassantTargetCol:
-          enPassantTargetCol,
-    )) {
-      return '$notation#';
-    }
-
-    if (ChessLogic.isInCheck(
-      board,
-      opponent,
-    )) {
-      return '$notation+';
-    }
-
-    return notation;
-  }
-
-  // ============================================================
-  // FILE NAME
-  // ============================================================
-
-  String _fileName(
-    int col,
-  ) {
-    const files = [
-      'a',
-      'b',
-      'c',
-      'd',
-      'e',
-      'f',
-      'g',
-      'h',
-    ];
-
-    return files[col];
-  }
-
-  // ============================================================
-  // RANK NAME
-  // ============================================================
-
-  String _rankName(
-    int row,
-  ) {
-    const ranks = [
-      '8',
-      '7',
-      '6',
-      '5',
-      '4',
-      '3',
-      '2',
-      '1',
-    ];
-
-    return ranks[row];
-  }
-
-  // ============================================================
-  // SQUARE NAME
-  // ============================================================
-
-  String _squareName(
-    int row,
-    int col,
-  ) {
-    return '${_fileName(col)}${_rankName(row)}';
-  }
-
-  // ============================================================
-  // GAME RESULT
-  // ============================================================
-
-  void _checkGameResult(
-    bool sideToMove,
-  ) {
-    if (!mounted) {
-      return;
-    }
-
-    // ----------------------------------------------------------
-    // DRAW — INSUFFICIENT MATERIAL
-    // ----------------------------------------------------------
-
-    if (ChessLogic.isInsufficientMaterial(
-      board,
-    )) {
-      setState(() {
-        gameOver = true;
-
-        winnerMessage =
-            'Draw by insufficient material.';
-      });
-
-      _showGameOverDialog(
-        'Draw',
-        'The game ended because there is insufficient material to checkmate.',
-      );
-
-      return;
-    }
-
-    // ----------------------------------------------------------
-    // DRAW — FIVEFOLD REPETITION
-    // ----------------------------------------------------------
-
-    if (_isFivefoldRepetition()) {
-      setState(() {
-        gameOver = true;
-
-        winnerMessage =
-            'Draw by fivefold repetition.';
-      });
-
-      _showGameOverDialog(
-        'Draw',
-        'The same position occurred five times.',
-      );
-
-      return;
-    }
-
-    // ----------------------------------------------------------
-    // DRAW — THREEFOLD REPETITION
-    // ----------------------------------------------------------
-
-    if (_isThreefoldRepetition()) {
-      setState(() {
-        gameOver = true;
-
-        winnerMessage =
-            'Draw by threefold repetition.';
-      });
-
-      _showGameOverDialog(
-        'Draw',
-        'The same position occurred three times.',
-      );
-
-      return;
-    }
-
-    // ----------------------------------------------------------
-    // DRAW — 75-MOVE RULE
-    // ----------------------------------------------------------
-
-    if (_isSeventyFiveMoveDraw()) {
-      setState(() {
-        gameOver = true;
-
-        winnerMessage =
-            'Draw by the 75-move rule.';
-      });
-
-      _showGameOverDialog(
-        'Draw',
-        '75 moves by each side were completed without a pawn move or capture.',
-      );
-
-      return;
-    }
-
-    // ----------------------------------------------------------
-    // DRAW — 50-MOVE RULE
-    // ----------------------------------------------------------
-
-    if (_isFiftyMoveDraw()) {
-      setState(() {
-        gameOver = true;
-
-        winnerMessage =
-            'Draw by the 50-move rule.';
-      });
-
-      _showGameOverDialog(
-        'Draw',
-        '50 moves by each side were completed without a pawn move or capture.',
-      );
-
-      return;
-    }
-
-    // ----------------------------------------------------------
-    // CHECKMATE
-    // ----------------------------------------------------------
-
-    if (ChessLogic.isCheckmate(
-      board,
-      sideToMove,
-      castlingRights:
-          castlingRights,
-      enPassantTargetRow:
-          enPassantTargetRow,
-      enPassantTargetCol:
-          enPassantTargetCol,
-    )) {
-      final winner =
-          sideToMove
-              ? 'Black'
-              : 'White';
-
-      setState(() {
-        gameOver = true;
-
-        winnerMessage =
-            '$winner wins by checkmate!';
-      });
-
-      _showGameOverDialog(
-        '$winner Wins!',
-        '$winner wins by checkmate.',
-      );
-
-      return;
-    }
-
-    // ----------------------------------------------------------
-    // STALEMATE
-    // ----------------------------------------------------------
-
-    if (ChessLogic.isStalemate(
-      board,
-      sideToMove,
-      castlingRights:
-          castlingRights,
-      enPassantTargetRow:
-          enPassantTargetRow,
-      enPassantTargetCol:
-          enPassantTargetCol,
-    )) {
-      setState(() {
-        gameOver = true;
-
-        winnerMessage =
-            'Draw by stalemate.';
-      });
-
-      _showGameOverDialog(
-        'Draw',
-        'The game ended in stalemate.',
-      );
-
-      return;
-    }
-
+  // ------------------------------------------------------------- updates --
+
+  void _onControllerChanged() {
+    final controller = _controller;
+    if (controller == null) return;
+    _maybeLowTimeTick(controller);
+    _requestEval();
     setState(() {});
   }
 
-  // ============================================================
-  // GAME OVER DIALOG
-  // ============================================================
-
-  void _showGameOverDialog(
-    String title,
-    String message,
-  ) {
-    Future.delayed(
-      const Duration(
-        milliseconds: 250,
-      ),
-      () {
-        if (!mounted) {
-          return;
-        }
-
-        showDialog(
-          context: context,
-          barrierDismissible: false,
-          builder: (context) {
-            return AlertDialog(
-              title: Text(
-                title,
-                style: const TextStyle(
-                  fontWeight:
-                      FontWeight.bold,
-                ),
-              ),
-              content: Text(
-                message,
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () {
-                    Navigator.pop(
-                      context,
-                    );
-
-                    restartGame();
-                  },
-                  child: const Text(
-                    'RESTART',
-                  ),
-                ),
-                TextButton(
-                  onPressed: () {
-                    Navigator.pop(
-                      context,
-                    );
-
-                    Navigator.pop(
-                      context,
-                    );
-                  },
-                  child: const Text(
-                    'EXIT',
-                  ),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
+  void _maybeLowTimeTick(GameController controller) {
+    final clock = controller.clock;
+    if (clock == null || controller.finished) return;
+    if (clock.isLowTime(
+      ClockSide.white,
+      threshold: const Duration(seconds: 6),
+    )) {
+      if (!_whiteTicked) {
+        _whiteTicked = true;
+        SoundService.instance.lowTime();
+      }
+    } else if (clock.remaining(ClockSide.white) > const Duration(seconds: 8)) {
+      _whiteTicked = false;
+    }
+    if (clock.isLowTime(
+      ClockSide.black,
+      threshold: const Duration(seconds: 6),
+    )) {
+      if (!_blackTicked) {
+        _blackTicked = true;
+        SoundService.instance.lowTime();
+      }
+    } else if (clock.remaining(ClockSide.black) > const Duration(seconds: 8)) {
+      _blackTicked = false;
+    }
   }
 
-  // ============================================================
-  // UNDO
-  // ============================================================
+  Future<void> _requestEval() async {
+    if (!_showEvalBar) return;
+    final controller = _controller;
+    if (controller == null || controller.finished) return;
+    final fen = controller.game.fen;
+    if (fen == _lastEvalFen) return;
+    _lastEvalFen = fen;
+    final seq = ++_evalSeq;
+    try {
+      final result = await EngineRunner.instance.analyze(
+        fen,
+        maxDepth: 6,
+        timeMs: 450,
+      );
+      if (!mounted || seq != _evalSeq) return;
+      setState(() {
+        _evalCp = result.whiteScoreCp;
+        _evalMate = result.isMate;
+        _evalMatePly = result.mateInPly;
+        _evalDepth = result.depth;
+      });
+    } catch (_) {
+      // Analysis is decorative; a failed search never blocks the game.
+    }
+  }
 
-  void undoMove() {
-    if (_undoHistory.isEmpty) {
-      return;
+  // -------------------------------------------------------------- finish --
+
+  Future<void> _handleFinished(GameFinishedEvent event) async {
+    if (_saved) return;
+    _saved = true;
+
+    final controller = _controller;
+    if (controller == null) return;
+
+    int? whiteAfter;
+    int? blackAfter;
+
+    if (controller.rated) {
+      final category = controller.timeControl.ratingCategory;
+      final localIsWhite = widget.mode == ChessGameMode.computer
+          ? !widget.computerIsWhite
+          : widget.mode == ChessGameMode.online
+              ? widget.localIsWhite
+              : true;
+      final opponentRating = localIsWhite
+          ? controller.blackRatingBefore
+          : controller.whiteRatingBefore;
+      final myScore = localIsWhite
+          ? event.result.whiteScore
+          : 1 - event.result.whiteScore;
+
+      try {
+        final profile = await SessionService.instance.current;
+        final rating = profile.ratingFor(category);
+        final change = rating.recordGame(
+          category: category,
+          opponentRating: opponentRating,
+          score: myScore,
+          at: controller.endedAt,
+        );
+        await ChessStorage.instance.upsertProfile(profile);
+
+        final localAfter = rating.rating;
+        whiteAfter = localIsWhite ? localAfter : opponentRating;
+        blackAfter = localIsWhite ? opponentRating : localAfter;
+        if (mounted) setState(() => _ratingDelta = change.delta);
+      } catch (_) {
+        // Rating bookkeeping must never block the result dialog; keep the
+        // record's ratings at their pre-game values instead.
+        whiteAfter = controller.whiteRatingBefore;
+        blackAfter = controller.blackRatingBefore;
+      }
     }
 
-    final previousState =
-        _undoHistory.removeLast();
-
-    setState(() {
-      board =
-          previousState.board
-              .map(
-                (row) =>
-                    List<String>.from(row),
-              )
-              .toList();
-
-      castlingRights =
-          previousState.castlingRights
-              .copy();
-
-      enPassantTargetRow =
-          previousState.enPassantTargetRow;
-
-      enPassantTargetCol =
-          previousState.enPassantTargetCol;
-
-      halfmoveClock =
-          previousState.halfmoveClock;
-
-      whiteTurn =
-          previousState.whiteTurn;
-
-      moveHistory
-        ..clear()
-        ..addAll(
-          previousState.moveHistory,
-        );
-
-      capturedWhitePieces
-        ..clear()
-        ..addAll(
-          previousState.capturedWhitePieces,
-        );
-
-      capturedBlackPieces
-        ..clear()
-        ..addAll(
-          previousState.capturedBlackPieces,
-        );
-
-      _positionOccurrences
-        ..clear()
-        ..addAll(
-          previousState.positionOccurrences,
-        );
-
-      selectedRow = null;
-      selectedCol = null;
-
-      validMoves = [];
-
-      gameOver = false;
-
-      winnerMessage = '';
-    });
-  }
-
-  // ============================================================
-  // SAVE STATE
-  // ============================================================
-
-  _ChessState _createCurrentState() {
-    return _ChessState(
-      board: board
-          .map(
-            (row) =>
-                List<String>.from(row),
-          )
-          .toList(),
-      castlingRights:
-          castlingRights.copy(),
-      enPassantTargetRow:
-          enPassantTargetRow,
-      enPassantTargetCol:
-          enPassantTargetCol,
-      halfmoveClock:
-          halfmoveClock,
-      whiteTurn:
-          whiteTurn,
-      moveHistory:
-          List<String>.from(
-        moveHistory,
-      ),
-      capturedWhitePieces:
-          List<String>.from(
-        capturedWhitePieces,
-      ),
-      capturedBlackPieces:
-          List<String>.from(
-        capturedBlackPieces,
-      ),
-      positionOccurrences:
-          Map<String, int>.from(
-        _positionOccurrences,
-      ),
+    final record = controller.buildRecord(
+      whiteRatingAfter: whiteAfter,
+      blackRatingAfter: blackAfter,
+      openingName: controller.opening?.name,
+      openingEco: controller.opening?.eco,
+      pgn: controller.game.pgn(),
     );
-  }
 
-  // ============================================================
-  // RESIGN
-  // ============================================================
-
-  void resignGame() {
-    if (gameOver) {
-      return;
+    if (record != null) {
+      _record = record;
+      try {
+        await ChessStorage.instance.addGame(record);
+      } catch (_) {
+        // Storage failures are non-fatal; the game is still over.
+      }
     }
 
-    final resigningPlayer =
-        whiteTurn
-            ? 'White'
-            : 'Black';
+    if (mounted && !_resultShown) {
+      _resultShown = true;
+      // Let the final move animation land before the modal.
+      await Future<void>.delayed(const Duration(milliseconds: 420));
+      if (mounted) _showResultDialog(event);
+    }
+  }
 
-    final winner =
-        whiteTurn
-            ? 'Black'
-            : 'White';
+  int? _ratingDelta;
 
-    showDialog(
+  Future<void> _showResultDialog(GameFinishedEvent event) async {
+    final controller = _controller;
+    if (controller == null || !mounted) return;
+    final result = event.result;
+    final record = _record;
+
+    await showDialog<void>(
       context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text(
-            'Resign Game?',
-            style: TextStyle(
-              fontWeight:
-                  FontWeight.bold,
-            ),
-          ),
-          content: Text(
-            '$resigningPlayer will lose the game if they resign.',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () {
-                Navigator.pop(
-                  context,
-                );
-              },
-              child: const Text(
-                'CANCEL',
-              ),
-            ),
-            TextButton(
-              onPressed: () {
-                Navigator.pop(
-                  context,
-                );
-
-                setState(() {
-                  gameOver = true;
-
-                  winnerMessage =
-                      '$winner wins by resignation!';
-                });
-
-                _showGameOverDialog(
-                  '$winner Wins!',
-                  '$winner wins by resignation.',
-                );
-              },
-              child: const Text(
-                'RESIGN',
-              ),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  // ============================================================
-  // RESTART
-  // ============================================================
-
-  void restartGame() {
-    setState(() {
-      board =
-          ChessLogic.createInitialBoard();
-
-      castlingRights =
-          CastlingRights.initial();
-
-      enPassantTargetRow = null;
-      enPassantTargetCol = null;
-
-      halfmoveClock = 0;
-
-      selectedRow = null;
-      selectedCol = null;
-
-      validMoves = [];
-
-      whiteTurn = true;
-
-      gameOver = false;
-
-      winnerMessage = '';
-
-      moveHistory.clear();
-
-      _undoHistory.clear();
-
-      capturedWhitePieces.clear();
-
-      capturedBlackPieces.clear();
-
-      _resetPositionHistory();
-    });
-  }
-
-  // ============================================================
-  // KING CHECK
-  // ============================================================
-
-  bool _isKingInCheck(
-    bool white,
-  ) {
-    return ChessLogic.isInCheck(
-      board,
-      white,
-    );
-  }
-
-  // ============================================================
-  // MOVE HISTORY
-  // ============================================================
-
-  void _showMoveHistory() {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor:
-          Theme.of(context)
-              .scaffoldBackgroundColor,
-      builder: (context) {
-        return SafeArea(
-          child: SizedBox(
-            height: 360,
-            child: Column(
-              children: [
-                const SizedBox(
-                  height: 14,
+      barrierDismissible: false,
+      builder: (context) => Dialog(
+        backgroundColor: ChessPalette.surface,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
+          side: BorderSide(color: ChessPalette.borderStrong),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(22),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 6,
                 ),
-
-                const Text(
-                  'MOVE HISTORY',
-                  style: TextStyle(
-                    fontSize: 17,
-                    fontWeight:
-                        FontWeight.bold,
-                    letterSpacing: 1.5,
+                decoration: BoxDecoration(
+                  color: result.isDraw
+                      ? ChessPalette.surfaceHigh
+                      : ChessPalette.accentSoft,
+                  borderRadius: ChessPalette.chipRadius,
+                  border: Border.all(color: ChessPalette.borderStrong),
+                ),
+                child: Text(
+                  result.headline,
+                  style: const TextStyle(
+                    color: ChessPalette.text,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 1.6,
                   ),
                 ),
-
-                const SizedBox(
-                  height: 12,
-                ),
-
-                const Divider(
-                  height: 1,
-                ),
-
-                Expanded(
-                  child:
-                      moveHistory.isEmpty
-                          ? const Center(
-                              child: Text(
-                                'No moves yet.',
-                              ),
-                            )
-                          : ListView.builder(
-                              padding:
-                                  const EdgeInsets
-                                      .symmetric(
-                                vertical: 8,
-                                horizontal: 20,
-                              ),
-                              itemCount:
-                                  (moveHistory.length +
-                                          1) ~/
-                                      2,
-                              itemBuilder:
-                                  (context,
-                                      index) {
-                                final whiteIndex =
-                                    index * 2;
-
-                                final blackIndex =
-                                    whiteIndex + 1;
-
-                                final whiteMove =
-                                    moveHistory[
-                                        whiteIndex];
-
-                                final blackMove =
-                                    blackIndex <
-                                            moveHistory
-                                                .length
-                                        ? moveHistory[
-                                            blackIndex]
-                                        : '';
-
-                                return Padding(
-                                  padding:
-                                      const EdgeInsets
-                                          .symmetric(
-                                    vertical: 5,
-                                  ),
-                                  child: Row(
-                                    children: [
-                                      SizedBox(
-                                        width: 32,
-                                        child:
-                                            Text(
-                                          '${index + 1}.',
-                                          style:
-                                              const TextStyle(
-                                            fontWeight:
-                                                FontWeight.bold,
-                                          ),
-                                        ),
-                                      ),
-
-                                      Expanded(
-                                        child:
-                                            Text(
-                                          whiteMove,
-                                          style:
-                                              const TextStyle(
-                                            fontWeight:
-                                                FontWeight.w600,
-                                          ),
-                                        ),
-                                      ),
-
-                                      Expanded(
-                                        child:
-                                            Text(
-                                          blackMove,
-                                          style:
-                                              const TextStyle(
-                                            fontWeight:
-                                                FontWeight.w600,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                );
-                              },
-                            ),
+              ),
+              const SizedBox(height: 14),
+              Text(
+                result.isDraw
+                    ? result.reasonLabel
+                    : '${result.winnerLabel} · ${result.reasonLabel}',
+                textAlign: TextAlign.center,
+                style: ChessText.title.copyWith(fontSize: 17),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                '${controller.whiteName} vs ${controller.blackName}',
+                textAlign: TextAlign.center,
+                style: ChessText.dim,
+              ),
+              if (controller.rated && _ratingDelta != null) ...[
+                const SizedBox(height: 14),
+                InfoChip(
+                  label: '${_ratingDelta! >= 0 ? '+' : ''}$_ratingDelta rating',
+                  icon: Icons.trending_up_rounded,
+                  color: _ratingDelta! >= 0
+                      ? ChessPalette.success.withValues(alpha: 0.18)
+                      : ChessPalette.danger.withValues(alpha: 0.18),
+                  textColor: _ratingDelta! >= 0
+                      ? ChessPalette.success
+                      : ChessPalette.danger,
                 ),
               ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  // ============================================================
-  // BUILD
-  // ============================================================
-
-  @override
-  Widget build(
-    BuildContext context,
-  ) {
-    final currentPlayer =
-        whiteTurn
-            ? 'White'
-            : 'Black';
-
-    final currentPlayerInCheck =
-        _isKingInCheck(
-      whiteTurn,
-    );
-
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text(
-          'Chess',
-          style: TextStyle(
-            fontWeight:
-                FontWeight.bold,
+              const SizedBox(height: 20),
+              if (record != null && widget.onReview != null) ...[
+                PrimaryButton(
+                  label: 'Review game',
+                  icon: Icons.insights_rounded,
+                  expanded: true,
+                  onPressed: () {
+                    Navigator.of(context).pop();
+                    widget.onReview!(record);
+                  },
+                ),
+                const SizedBox(height: 10),
+              ],
+              Row(
+                children: [
+                  Expanded(
+                    child: GhostButton(
+                      label: 'Exit',
+                      expanded: true,
+                      onPressed: () => Navigator.of(context).pop(),
+                    ),
+                  ),
+                  if (widget.mode != ChessGameMode.online) ...[
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: PrimaryButton(
+                        label: 'Rematch',
+                        expanded: true,
+                        icon: Icons.replay_rounded,
+                        onPressed: () {
+                          Navigator.of(context).pop();
+                          _rematch();
+                        },
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ],
           ),
         ),
+      ),
+    );
+  }
+
+  void _rematch() {
+    final navigator = Navigator.of(context);
+    navigator.pushReplacement(
+      MaterialPageRoute<void>(
+        builder: (_) => GameScreen(
+          mode: widget.mode,
+          timeControl: widget.timeControl,
+          computerLevel: widget.computerLevel,
+          computerIsWhite: widget.computerIsWhite,
+          whiteName: widget.whiteName,
+          blackName: widget.blackName,
+          rated: widget.rated,
+          onReview: widget.onReview,
+        ),
+      ),
+    );
+  }
+
+  // ------------------------------------------------------------ controls --
+
+  bool get _localIsWhite => widget.mode == ChessGameMode.online
+      ? widget.localIsWhite
+      : widget.mode == ChessGameMode.computer
+          ? !widget.computerIsWhite
+          : _controller?.isWhiteTurn ?? true;
+
+  Future<void> _confirmLeave() async {
+    final leave = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: ChessPalette.surface,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(18),
+          side: BorderSide(color: ChessPalette.borderStrong),
+        ),
+        title: const Text('Leave the game?', style: ChessText.title),
+        content: const Text(
+          'The current game will not be saved to your history.',
+          style: ChessText.dim,
+        ),
         actions: [
-          IconButton(
-            tooltip:
-                'Move history',
-            onPressed:
-                _showMoveHistory,
-            icon: const Icon(
-              Icons.history,
-            ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Keep playing'),
           ),
-
-          IconButton(
-            tooltip:
-                'Undo move',
-            onPressed:
-                _undoHistory.isEmpty
-                    ? null
-                    : undoMove,
-            icon: const Icon(
-              Icons.undo,
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text(
+              'Leave',
+              style: TextStyle(color: ChessPalette.danger),
             ),
-          ),
-
-          PopupMenuButton<String>(
-            onSelected:
-                (value) {
-              if (value ==
-                  'resign') {
-                resignGame();
-              }
-
-              if (value ==
-                  'restart') {
-                restartGame();
-              }
-            },
-            itemBuilder:
-                (context) {
-              return const [
-                PopupMenuItem(
-                  value:
-                      'resign',
-                  child: Text(
-                    'Resign',
-                  ),
-                ),
-                PopupMenuItem(
-                  value:
-                      'restart',
-                  child: Text(
-                    'Restart Game',
-                  ),
-                ),
-              ];
-            },
           ),
         ],
       ),
+    );
+    if (leave == true && mounted) Navigator.of(context).pop();
+  }
 
-      body: SafeArea(
+  Future<void> _resign() async {
+    final controller = _controller;
+    if (controller == null || controller.finished) return;
+    if (_settings.confirmResign) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          backgroundColor: ChessPalette.surface,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(18),
+            side: BorderSide(color: ChessPalette.borderStrong),
+          ),
+          title: const Text('Resign?', style: ChessText.title),
+          content: Text(
+            'You will lose this game as ${_localIsWhite ? 'White' : 'Black'}.',
+            style: ChessText.dim,
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text(
+                'Resign',
+                style: TextStyle(color: ChessPalette.danger),
+              ),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true) return;
+    }
+    final live = widget.liveGame;
+    if (live != null) {
+      // Server-authoritative: the board finishes when GameEnded arrives.
+      try {
+        await live.resign();
+        _snack('Resign sent.');
+      } catch (error) {
+        _snack('Could not resign: $error');
+      }
+      return;
+    }
+    controller.resign(byWhite: _localIsWhite);
+  }
+
+  Future<void> _offerDraw() async {
+    final controller = _controller;
+    if (controller == null || controller.finished) return;
+
+    if (controller.mode == ChessGameMode.passAndPlay) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          backgroundColor: ChessPalette.surface,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(18),
+            side: BorderSide(color: ChessPalette.borderStrong),
+          ),
+          title: const Text('Offer a draw?', style: ChessText.title),
+          content: Text(
+            'The other player can accept or decline.',
+            style: ChessText.dim,
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Offer'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true || !mounted) return;
+
+      final offeringWhite = controller.isWhiteTurn;
+      await controller.offerDraw(byWhite: offeringWhite);
+      if (!mounted || controller.finished) return;
+
+      final accept = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          backgroundColor: ChessPalette.surface,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(18),
+            side: BorderSide(color: ChessPalette.borderStrong),
+          ),
+          title: const Text('Draw offered', style: ChessText.title),
+          content: Text(
+            '${offeringWhite ? controller.blackName : controller.whiteName}, '
+            'do you accept the draw?',
+            style: ChessText.dim,
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Decline'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Accept'),
+            ),
+          ],
+        ),
+      );
+      controller.respondToDrawOffer(accepted: accept == true);
+      return;
+    }
+
+    final live = widget.liveGame;
+    if (live != null) {
+      // Marks the local offer active, then sends it through the server.
+      await controller.offerDraw(byWhite: widget.localIsWhite);
+      if (!mounted) return;
+      try {
+        await live.offerDraw();
+        _snack('Draw offer sent.');
+      } catch (error) {
+        controller.respondToDrawOffer(accepted: false);
+        _snack('Could not send draw offer: $error');
+      }
+      return;
+    }
+
+    final accepted = await controller.offerDraw(byWhite: _localIsWhite);
+    if (!mounted) return;
+    if (!accepted) {
+      _snack(controller.statusMessage ?? 'Draw offer declined');
+    }
+  }
+
+  void _snack(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..clearSnackBars()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(message),
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: ChessPalette.surfaceHigh,
+          duration: const Duration(milliseconds: 1600),
+        ),
+      );
+  }
+
+  // -------------------------------------------------------------- online --
+
+  String _opponentName(GameController controller) => widget.localIsWhite
+      ? controller.blackName
+      : controller.whiteName;
+
+  /// Applies a server event to the local controller.
+  void _onLiveEvent(LiveGameEvent event) {
+    final controller = _controller;
+    if (!mounted || controller == null) return;
+    switch (event) {
+      case OpponentMoved(:final from, :final to, :final promotion):
+        controller.applyRemoteMove(from: from, to: to, promotion: promotion);
+      case PositionResynced(:final fen, :final whiteMs, :final blackMs):
+        controller.applyRemoteSync(
+          fen: fen,
+          whiteMs: whiteMs,
+          blackMs: blackMs,
+        );
+      case ClockSynced(:final whiteMs, :final blackMs):
+        controller.applyRemoteClock(whiteMs: whiteMs, blackMs: blackMs);
+      case DrawOffered():
+        if (controller.finished) return;
+        controller.applyRemoteDrawOffer(byWhite: !widget.localIsWhite);
+        unawaited(_promptRemoteDraw());
+      case GameEnded(:final result):
+        controller.applyRemoteResult(result);
+      case ConnectionLost():
+        if (!mounted) return;
+        setState(() => _connectionLost = true);
+        _snack('Connection to the server was lost.');
+    }
+  }
+
+  /// Asks the local player to answer the opponent's draw offer.
+  Future<void> _promptRemoteDraw() async {
+    if (_drawPromptOpen) return;
+    final controller = _controller;
+    if (controller == null || controller.finished) return;
+    _drawPromptOpen = true;
+    final accept = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        backgroundColor: ChessPalette.surface,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(18),
+          side: BorderSide(color: ChessPalette.borderStrong),
+        ),
+        title: const Text('Draw offered', style: ChessText.title),
+        content: Text(
+          '${_opponentName(controller)}, do you accept the draw?',
+          style: ChessText.dim,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Decline'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Accept'),
+          ),
+        ],
+      ),
+    );
+    _drawPromptOpen = false;
+    if (!mounted) return;
+    final current = _controller;
+    if (current == null || current.finished) return;
+    current.respondToDrawOffer(accepted: accept == true);
+    final live = widget.liveGame;
+    if (live != null) {
+      try {
+        await live.answerDraw(accept: accept == true);
+      } catch (_) {
+        // The local answer already applied; a failed relay just means the
+        // server never ends the game — the connection banner tells the story.
+      }
+    }
+  }
+
+  void _takeback() {
+    final controller = _controller;
+    if (controller == null) return;
+    final undone = controller.requestTakeback();
+    if (undone == 0) {
+      _snack(controller.statusMessage ?? 'Takeback unavailable');
+    } else if (controller.mode != ChessGameMode.online) {
+      _snack('Takeback (${undone == 1 ? '1 move' : '$undone moves'})');
+    }
+  }
+
+  // --------------------------------------------------------------- build --
+
+  @override
+  Widget build(BuildContext context) {
+    final error = _bootError;
+    if (error != null) {
+      return Scaffold(
+        backgroundColor: ChessPalette.background,
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Text(
+              'Could not start the game:\n$error',
+              textAlign: TextAlign.center,
+              style: ChessText.dim,
+            ),
+          ),
+        ),
+      );
+    }
+
+    final controller = _controller;
+    if (controller == null) {
+      return const Scaffold(
+        backgroundColor: ChessPalette.background,
+        body: Center(
+          child: CircularProgressIndicator(color: ChessPalette.accent),
+        ),
+      );
+    }
+
+    final width = MediaQuery.sizeOf(context).width;
+    final wide = width >= 900;
+
+    return PopScope(
+      canPop:
+          !controller.started ||
+          controller.finished ||
+          controller.moves.isEmpty,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        _confirmLeave();
+      },
+      child: Scaffold(
+        backgroundColor: ChessPalette.background,
+        body: SafeArea(
+          child: Column(
+            children: [
+              _buildTopBar(controller),
+              if (_connectionLost)
+                Container(
+                  width: double.infinity,
+                  margin: const EdgeInsets.fromLTRB(12, 6, 12, 0),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(10),
+                    color: ChessPalette.danger.withValues(alpha: 0.14),
+                    border: Border.all(
+                      color: ChessPalette.danger.withValues(alpha: 0.5),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.wifi_off_rounded,
+                          size: 16, color: ChessPalette.danger),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Connection lost — the server keeps your clock '
+                          'running until the game resolves.',
+                          style: ChessText.caption
+                              .copyWith(color: ChessPalette.danger),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              Expanded(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Expanded(
+                      child: Column(
+                        children: [
+                          _buildBoardArea(controller, wide),
+                          _buildControls(controller),
+                          if (!wide)
+                            SizedBox(
+                              height: 168,
+                              child: Padding(
+                                padding: const EdgeInsets.fromLTRB(
+                                  12,
+                                  4,
+                                  12,
+                                  12,
+                                ),
+                                child: _buildMoveList(controller),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                    if (wide)
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(0, 12, 14, 14),
+                        child: SizedBox(
+                          width: 320,
+                          child: _buildMoveList(controller),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTopBar(GameController controller) {
+    final opening = controller.opening;
+    String status;
+    if (controller.thinking) {
+      status = 'Thinking…';
+    } else if (controller.statusMessage != null) {
+      status = controller.statusMessage!;
+    } else if (opening != null) {
+      status = opening.name;
+    } else {
+      status = controller.timeControl.displayLabel;
+    }
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(6, 6, 12, 2),
+      child: Row(
+        children: [
+          IconButton(
+            onPressed: () {
+              if (controller.started &&
+                  !controller.finished &&
+                  controller.moves.isNotEmpty) {
+                _confirmLeave();
+              } else {
+                Navigator.of(context).maybePop();
+              }
+            },
+            icon: const Icon(
+              Icons.arrow_back_rounded,
+              color: ChessPalette.text,
+              size: 22,
+            ),
+          ),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  status,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: ChessPalette.text,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                if (opening?.eco != null)
+                  Text(
+                    '${opening!.eco} · ${controller.timeControl.displayLabel}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: ChessText.caption,
+                  )
+                else
+                  Text(
+                    controller.timeControl.displayLabel,
+                    maxLines: 1,
+                    style: ChessText.caption,
+                  ),
+              ],
+            ),
+          ),
+          if (_showEvalBar && _lastEvalFen != null)
+            Padding(
+              padding: const EdgeInsets.only(right: 4),
+              child: Tooltip(
+                message: 'Evaluation to depth $_evalDepth',
+                child: EvalPill(
+                  scoreCp: _evalCp,
+                  isMate: _evalMate,
+                  mateInPly: _evalMatePly,
+                ),
+              ),
+            ),
+          IconButton(
+            onPressed: () =>
+                setState(() => controller.flipped = !controller.flipped),
+            icon: const Icon(
+              Icons.flip_rounded,
+              color: ChessPalette.textDim,
+              size: 21,
+            ),
+            tooltip: 'Flip board',
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// One of the two player rows: the opponent above the board, the local
+  /// player below it (they swap when the board is flipped).
+  Widget _buildPlayerBar(GameController controller, {required bool atTop}) {
+    final whiteOnTop =
+        controller.flipped; // white sits at the bottom by default
+    final isWhite = atTop ? whiteOnTop : !whiteOnTop;
+    final side = isWhite ? ClockSide.white : ClockSide.black;
+
+    final clock = controller.clock;
+    final captures = controller.captured;
+    final balance = controller.materialBalance(); // from White's perspective
+
+    final engineIsWhite =
+        controller.mode == ChessGameMode.computer && controller.computerIsWhite;
+
+    return Padding(
+      padding: EdgeInsets.symmetric(horizontal: 16),
+      child: PlayerBar(
+        name: isWhite ? controller.whiteName : controller.blackName,
+        isWhite: isWhite,
+        rating: controller.rated
+            ? (isWhite
+                  ? controller.whiteRatingBefore
+                  : controller.blackRatingBefore)
+            : null,
+        captured: isWhite ? captures.byWhite : captures.byBlack,
+        advantage: isWhite ? balance : -balance,
+        clock: clock == null
+            ? null
+            : isWhite
+            ? controller.whiteClock.value
+            : controller.blackClock.value,
+        clockActive:
+            clock != null && clock.isRunning && clock.activeSide == side,
+        clockUrgent:
+            clock != null &&
+            clock.isLowTime(side, threshold: const Duration(seconds: 20)),
+        clockCritical: clock != null && clock.isCriticalTime(side),
+        thinking: controller.thinking && (isWhite == engineIsWhite),
+      ),
+    );
+  }
+
+  Widget _buildBoardArea(GameController controller, bool wide) {
+    final showEval = _showEvalBar;
+    final evalWidth = showEval ? 24.0 : 0.0;
+    final gap = showEval ? 8.0 : 0.0;
+
+    return Expanded(
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(wide ? 16 : 10, 4, wide ? 16 : 10, 4),
         child: Column(
           children: [
-            const SizedBox(
-              height: 10,
-            ),
-
-            Text(
-              gameOver
-                  ? winnerMessage
-                  : "$currentPlayer's turn",
-              style:
-                  const TextStyle(
-                fontSize: 20,
-                fontWeight:
-                    FontWeight.bold,
-              ),
-              textAlign:
-                  TextAlign.center,
-            ),
-
-            const SizedBox(
-              height: 6,
-            ),
-
-            if (!gameOver &&
-                currentPlayerInCheck)
-              const Text(
-                'CHECK!',
-                style:
-                    TextStyle(
-                  color: Colors.red,
-                  fontSize: 17,
-                  fontWeight:
-                      FontWeight.w900,
-                  letterSpacing: 2,
-                ),
-              ),
-
-            const SizedBox(
-              height: 8,
-            ),
-
-            SizedBox(
-              height: 28,
-              child: Row(
-                mainAxisAlignment:
-                    MainAxisAlignment
-                        .center,
-                children: [
-                  if (capturedBlackPieces
-                      .isNotEmpty)
-                    ...capturedBlackPieces
-                        .map(
-                      (piece) {
-                        return _capturedPiece(
-                          piece,
-                        );
-                      },
-                    ),
-
-                  if (capturedBlackPieces
-                          .isNotEmpty &&
-                      capturedWhitePieces
-                          .isNotEmpty)
-                    const SizedBox(
-                      width: 14,
-                    ),
-
-                  if (capturedWhitePieces
-                      .isNotEmpty)
-                    ...capturedWhitePieces
-                        .map(
-                      (piece) {
-                        return _capturedPiece(
-                          piece,
-                        );
-                      },
-                    ),
-                ],
-              ),
-            ),
-
-            const SizedBox(
-              height: 4,
-            ),
-
+            _buildPlayerBar(controller, atTop: true),
             Expanded(
-              child: Center(
-                child: ChessBoard(
-                  board: board,
-                  selectedRow:
-                      selectedRow,
-                  selectedCol:
-                      selectedCol,
-                  validMoves:
-                      validMoves,
-                  isKingInCheck:
-                      _isKingInCheck,
-                  isValidMoveSquare:
-                      _isValidMoveSquare,
-                  onSquareTap:
-                      onSquareTap,
-                ),
-              ),
-            ),
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final available = math.min(
+                    constraints.maxWidth - evalWidth - gap,
+                    constraints.maxHeight,
+                  );
+                  final size = available.isFinite && available > 80
+                      ? available
+                      : constraints.maxWidth;
 
-            Padding(
-              padding:
-                  const EdgeInsets.symmetric(
-                horizontal: 20,
-              ),
-              child: Row(
-                children: [
-                  Expanded(
-                    child:
-                        OutlinedButton.icon(
-                      onPressed:
-                          _undoHistory.isEmpty
-                              ? null
-                              : undoMove,
-                      icon:
-                          const Icon(
-                        Icons.undo,
-                      ),
-                      label:
-                          const Text(
-                        'UNDO',
+                  final interactive = controller.canInteract;
+
+                  return Center(
+                    child: SizedBox(
+                      width: size + evalWidth + gap,
+                      height: size,
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          if (showEval)
+                            SizedBox(
+                              width: evalWidth,
+                              height: size,
+                              child: EvalBar(
+                                scoreCp: _evalCp,
+                                isMate: _evalMate,
+                                mateInPly: _evalMatePly,
+                                orientationWhite: !controller.flipped,
+                                width: evalWidth,
+                              ),
+                            ),
+                          if (showEval) SizedBox(width: gap),
+                          Expanded(
+                            child: ChessBoardView(
+                              pieces: controller.game.pieces,
+                              orientationWhite: !controller.flipped,
+                              selectedSquare: controller.selectedSquare,
+                              legalTargets: controller.legalTargets,
+                              lastMoveFrom: controller.lastMoveFrom,
+                              lastMoveTo: controller.lastMoveTo,
+                              checkSquare: controller.checkedKingSquare,
+                              interactive: interactive,
+                              movableSquares: interactive
+                                  ? controller.game.legalMoves
+                                        .map((m) => m.from)
+                                        .toSet()
+                                  : const <String>{},
+                              showCoordinates: _settings.showCoordinates,
+                              showLegalDots: _settings.showLegalDots,
+                              showLastMove: _settings.showLastMove,
+                              animationDuration: _settings.moveAnimation,
+                              pendingPromotion: controller.pendingPromotion,
+                              onPromotionSelected: controller.completePromotion,
+                              onPromotionCancelled: controller.cancelPromotion,
+                              onTapSquare: controller.tapSquare,
+                              onMoveAttempt: (from, to) =>
+                                  controller.playMove(from: from, to: to),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                  ),
-
-                  const SizedBox(
-                    width: 12,
-                  ),
-
-                  Expanded(
-                    child:
-                        ElevatedButton.icon(
-                      onPressed:
-                          restartGame,
-                      icon:
-                          const Icon(
-                        Icons.refresh,
-                      ),
-                      label:
-                          const Text(
-                        'RESTART',
-                      ),
-                    ),
-                  ),
-                ],
+                  );
+                },
               ),
             ),
-
-            const SizedBox(
-              height: 12,
-            ),
+            _buildPlayerBar(controller, atTop: false),
           ],
         ),
       ),
     );
   }
 
-  // ============================================================
-  // CAPTURED PIECE
-  // ============================================================
-
-  Widget _capturedPiece(
-    String piece,
-  ) {
+  Widget _buildControls(GameController controller) {
+    final wide = MediaQuery.sizeOf(context).width >= 900;
     return Padding(
-      padding:
-          const EdgeInsets.symmetric(
-        horizontal: 1,
-      ),
-      child: Image.asset(
-        'assets/images/chess/pieces/$piece.png',
-        width: 22,
-        height: 22,
-        fit: BoxFit.contain,
+      padding: EdgeInsets.fromLTRB(wide ? 16 : 10, 6, wide ? 16 : 10, 6),
+      child: Row(
+        children: [
+          Expanded(
+            child: GhostButton(
+              label: 'Draw',
+              icon: Icons.handshake_rounded,
+              dense: true,
+              expanded: true,
+              onPressed: controller.finished || controller.drawOfferActive
+                  ? null
+                  : _offerDraw,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: GhostButton(
+              label: 'Takeback',
+              icon: Icons.undo_rounded,
+              dense: true,
+              expanded: true,
+              onPressed: controller.finished ||
+                      controller.moves.isEmpty ||
+                      widget.liveGame != null
+                  ? null
+                  : _takeback,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: GhostButton(
+              label: 'Flip',
+              icon: Icons.flip_rounded,
+              dense: true,
+              expanded: true,
+              onPressed: () =>
+                  setState(() => controller.flipped = !controller.flipped),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: GhostButton(
+              label: 'Resign',
+              icon: Icons.flag_rounded,
+              dense: true,
+              danger: true,
+              expanded: true,
+              onPressed: controller.finished || controller.moves.isEmpty
+                  ? null
+                  : _resign,
+            ),
+          ),
+        ],
       ),
     );
   }
-}
 
-// ================================================================
-// UNDO STATE
-// ================================================================
-
-class _ChessState {
-  final List<List<String>> board;
-
-  final CastlingRights castlingRights;
-
-  final int? enPassantTargetRow;
-
-  final int? enPassantTargetCol;
-
-  final int halfmoveClock;
-
-  final bool whiteTurn;
-
-  final List<String> moveHistory;
-
-  final List<String> capturedWhitePieces;
-
-  final List<String> capturedBlackPieces;
-
-  final Map<String, int> positionOccurrences;
-
-  _ChessState({
-    required this.board,
-    required this.castlingRights,
-    required this.enPassantTargetRow,
-    required this.enPassantTargetCol,
-    required this.halfmoveClock,
-    required this.whiteTurn,
-    required this.moveHistory,
-    required this.capturedWhitePieces,
-    required this.capturedBlackPieces,
-    required this.positionOccurrences,
-  });
+  Widget _buildMoveList(GameController controller) {
+    return MoveListView(
+      moves: controller.moves,
+      openingName: controller.opening?.name,
+      openingEco: controller.opening?.eco,
+      emptyLabel: controller.thinking
+          ? 'The computer is thinking…'
+          : 'Play a move to start the game.',
+      selectedIndex: controller.moves.isEmpty
+          ? null
+          : controller.moves.length - 1,
+      border: Border.all(color: ChessPalette.border),
+      background: ChessPalette.surfaceAlt,
+    );
+  }
 }

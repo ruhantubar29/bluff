@@ -1,0 +1,31 @@
+{
+  "flutter": {
+    "platforms": {
+      "android": {
+        "default": {
+          "projectId": "bluff-bd",
+          "appId": "1:149296809595:android:2044f704ad036bac37c4de",
+          "fileOutput": "android/app/google-services.json"
+        }
+      },
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "bluff-bd",
+          "configurations": {
+            "android": "1:149296809595:android:2044f704ad036bac37c4de",
+            "ios": "1:149296809595:ios:0992dea1ccc6068337c4de",
+            "macos": "1:149296809595:ios:0992dea1ccc6068337c4de",
+            "web": "1:149296809595:web:eac43515d02e256737c4de",
+            "windows": "1:149296809595:web:e3aa779444ad202037c4de"
+          }
+        }
+      }
+    }
+  },
+  "firestore": {
+    "database": "(default)",
+    "location": "asia-southeast1",
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json"
+  }
+}

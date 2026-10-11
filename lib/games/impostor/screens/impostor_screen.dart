@@ -114,14 +114,6 @@ class _ImpostorScreenState extends State<ImpostorScreen> {
     return 1;
   }
 
-  AppLanguage _languageFromCode(String code) {
-    if (code == AppLanguage.english.code) {
-      return AppLanguage.english;
-    }
-
-    return AppLanguage.bangla;
-  }
-
   Future<void> _loadSavedState() async {
     await ImpostorWordDeck.instance.initialize();
 
@@ -145,19 +137,9 @@ class _ImpostorScreenState extends State<ImpostorScreen> {
     final savedHints =
         await storage.loadHintsEnabled();
 
-    final savedLanguageCode =
-        await storage.loadLanguageCode();
-
-    var language = _language;
-
-    if (savedLanguageCode != null) {
-      language =
-          _languageFromCode(savedLanguageCode);
-    }
-
     final categories =
         ImpostorWordDeck.instance.categories(
-      language,
+      _language,
     );
 
     List<ImpostorPlayer> players;
@@ -203,8 +185,6 @@ class _ImpostorScreenState extends State<ImpostorScreen> {
     }
 
     setState(() {
-      _language = language;
-
       _categories = categories;
 
       _players = players;

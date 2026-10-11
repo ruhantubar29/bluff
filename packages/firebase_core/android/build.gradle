@@ -1,0 +1,83 @@
+group 'io.flutter.plugins.firebase.core'
+version '1.0-SNAPSHOT'
+
+apply plugin: 'com.android.library'
+apply from: file("local-config.gradle")
+
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+rootProject.allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+// VENDORED COPY of firebase_core 4.15.0 — identical to pub.dev except this
+// file. Upstream applies the legacy Kotlin Gradle Plugin conditionally
+// (AGP < 9 or android.builtInKotlin=false), which is a no-op under this app's
+// AGP 9 + built-in Kotlin, but Flutter's KGP detection scans build script
+// *text* and flags the literal apply line anyway. The branch is removed
+// entirely here; AGP 9's built-in Kotlin compiles the plugin's Kotlin sources.
+// Revert path: when pub.dev ships a KGP-free release, delete packages/
+// firebase_core and restore the hosted constraint in pubspec.yaml.
+
+def getRootProjectExtOrDefaultProperty(name) {
+    if (!rootProject.ext.has("FlutterFire")) return project.properties[name]
+    if (!rootProject.ext.get("FlutterFire")[name]) return project.properties[name]
+    return rootProject.ext.get("FlutterFire").get(name)
+}
+
+android {
+    // Conditional for compatibility with AGP <4.2.
+    if (project.android.hasProperty("namespace")) {
+      namespace 'io.flutter.plugins.firebase.core'
+    }
+
+    compileSdk project.ext.compileSdk
+
+    defaultConfig {
+        minSdkVersion project.ext.minSdk
+        targetSdkVersion project.ext.targetSdk
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    compileOptions {
+        sourceCompatibility project.ext.javaVersion
+        targetCompatibility project.ext.javaVersion
+    }
+
+    sourceSets {
+      main.java.srcDirs += "src/main/kotlin"
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    lintOptions {
+        disable 'InvalidPackage'
+    }
+
+    dependencies {
+        implementation platform("com.google.firebase:firebase-bom:${getRootProjectExtOrDefaultProperty("FirebaseSDKVersion")}")
+        implementation "com.google.firebase:firebase-common"
+
+        implementation 'androidx.annotation:annotation:1.7.0'
+    }
+}
+
+plugins.withId("org.jetbrains.kotlin.android") {
+  kotlin {
+    compilerOptions {
+      jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.fromTarget(project.ext.javaVersion.toString())
+    }
+  }
+}
+
+apply from: file("./user-agent.gradle")

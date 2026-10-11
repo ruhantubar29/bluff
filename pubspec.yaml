@@ -33,9 +33,43 @@ dependencies:
 
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
-  cupertino_icons: ^1.0.8
+  cupertino_icons: ^2.0.0
   shared_preferences: ^2.5.5
-  google_fonts: ^8.2.1
+  google_fonts: ^9.0.0
+  firebase_core: ^4.15.0
+  firebase_auth: ^6.7.0
+  cloud_firestore: ^6.10.0
+  chess: ^0.8.1
+  audioplayers: ^6.8.1
+  crypto: ^3.0.7
+  google_sign_in: ^7.2.0
+  firebase_messaging: ^16.7.0
+  share_plus: ^13.3.1
+  # Vendored: upstream 2.0.12 applies the legacy Kotlin Gradle Plugin
+  # unconditionally, blocking AGP 9 / built-in Kotlin (fix pending upstream in
+  # britannio/in_app_review#179). Only its android/build.gradle differs from
+  # pub.dev — it skips KGP and lets AGP 9's built-in Kotlin compile the
+  # plugin's Kotlin sources. Same vendoring pattern as stockfish below.
+  in_app_review:
+    path: packages/in_app_review
+  image_picker: ^1.2.4
+  path_provider: ^2.1.6
+  stockfish:
+    path: packages/stockfish
+  web_socket_channel: ^3.0.3
+
+# Vendored plugin copies (identical Dart/native code to pub.dev; only their
+# android/build.gradle differs — the dead-branch legacy Kotlin Gradle Plugin
+# apply is removed so Flutter's build-script text scan stops flagging them
+# under AGP 9 + built-in Kotlin; upstream: britannio/in_app_review#179 and
+# FlutterFire). Overrides are required because firebase_messaging constrains
+# firebase_core to hosted. Revert path: when pub.dev ships KGP-free releases,
+# delete these directories and remove this section.
+dependency_overrides:
+  firebase_core:
+    path: packages/firebase_core
+  firebase_auth:
+    path: packages/firebase_auth
 
 dev_dependencies:
   flutter_test:

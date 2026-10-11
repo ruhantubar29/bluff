@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/profile/player_roster.dart';
+import '../../../core/profile/roster_chips.dart';
+
 class PlayerScreen extends StatefulWidget {
   final List<String> players;
 
@@ -25,6 +28,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
         text: widget.players[index],
       ),
     );
+
+    // Roster loads asynchronously on first use (saved players chips).
+    PlayerRoster.instance.load().then((_) {
+      if (mounted) setState(() {});
+    });
   }
 
   @override
@@ -51,7 +59,21 @@ class _PlayerScreenState extends State<PlayerScreen> {
       return;
     }
 
+    // Remember the crew so next game starts pre-filled.
+    PlayerRoster.instance.recordGame(players);
+
     Navigator.pop(context, players);
+  }
+
+  /// Taps on a saved roster name drop it into the first empty slot.
+  void fillFromRoster(String name) {
+    for (final controller in controllers) {
+      if (controller.text.trim().isEmpty) {
+        controller.text = name;
+        setState(() {});
+        return;
+      }
+    }
   }
 
   @override
@@ -77,16 +99,19 @@ class _PlayerScreenState extends State<PlayerScreen> {
               ),
             ),
 
+            RosterChips(onPick: fillFromRoster),
+
             const SizedBox(height: 25),
 
             Expanded(
               child: ListView.separated(
                 itemCount: controllers.length,
-                separatorBuilder: (_, __) =>
+                separatorBuilder: (_, _) =>
                     const SizedBox(height: 16),
                 itemBuilder: (context, index) {
                   return TextField(
                     controller: controllers[index],
+                    onChanged: (_) => setState(() {}),
                     textCapitalization:
                         TextCapitalization.words,
                     decoration: InputDecoration(

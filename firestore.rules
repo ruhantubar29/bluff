@@ -1,0 +1,40 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    match /users/{userId} {
+      allow read, write: if true;
+    }
+
+    match /rooms/{roomId} {
+
+      // Multiplayer prototype.
+      allow read, write: if true;
+
+      // --------------------------------------------------
+      // PRIVATE PLAYER DATA
+      // --------------------------------------------------
+
+      match /private/{userId} {
+        allow read, write: if true;
+      }
+
+      // --------------------------------------------------
+      // VOTES
+      // --------------------------------------------------
+
+      match /votes/{voterId} {
+        allow read, write: if true;
+      }
+
+      // --------------------------------------------------
+      // CHAT
+      // --------------------------------------------------
+
+      match /chat/{messageId} {
+        allow read, write: if true;
+      }
+    }
+  }
+}
