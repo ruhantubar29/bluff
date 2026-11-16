@@ -2,6 +2,8 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:audioplayers/audioplayers.dart';
+import 'package:flutter/gestures.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/widgets.dart';
 
 import 'sound_settings.dart';
@@ -76,7 +78,7 @@ class UiSounds {
   }
 
   /// ~55 ms woodblock-ish tick: a fast sine blip with a touch of noise for
-  /// attack, normalised so it sits clearly above the music bed.
+  /// attack, normalised to sit clearly above the rest of the mix.
   Uint8List _synthClick() {
     const n = _clickSamples;
     final buf = List<double>.filled(n, 0);
@@ -146,16 +148,51 @@ class UiSounds {
   }
 }
 
-/// Wraps the whole app and ticks on every genuine tap.
+/// Watches taps across the whole app and ticks only when a control is pressed.
 ///
-/// Placed above the [Navigator] via [MaterialApp.builder] so it sees taps on
-/// buttons, tiles and list rows alike. A pointer only counts as a tap when it
-/// stays under [_maxSlop] and lifts within [_maxDuration] — that keeps
-/// scrolling, dragging and slider scrubbing silent.
+/// Mounted above the [Navigator] via [MaterialApp.builder]. Pointers are
+/// observed through the router's global route rather than a wrapping
+/// [Listener], which keeps this scope out of its own hit test — otherwise it
+/// would look like a control on every single tap. A pointer only counts as a
+/// tap when it stays under [_maxSlop] and lifts within [_maxDuration], which
+/// keeps scrolling, dragging and slider scrubbing silent, *and* the spot it
+/// landed on must be pressable, so tapping blank space never ticks.
 class TapSoundScope extends StatefulWidget {
   const TapSoundScope({super.key, required this.child});
 
   final Widget child;
+
+  /// Whether a tap at [position] landed on a pressable control rather than on
+  /// blank space.
+  ///
+  /// Re-runs the hit test at the tap point. Every gesture-driven control —
+  /// buttons, tiles, list rows, game options — forwards presses through its
+  /// own [RenderPointerListener], and a disabled control drops those
+  /// callbacks, so it stays quiet too.
+  ///
+  /// The [Navigator] installs a listener over the entire app as well, so one
+  /// press listener is just chrome and is present on every tap, blank space
+  /// included. A control is what puts a *second* one inside it.
+  ///
+  /// shortcut: a screen that installs its own full-screen press listener
+  /// inside the Navigator would read as a control on blank taps — upgrade to
+  /// identifying the listener by owner if such a screen is ever added.
+  static bool hitsControl(BuildContext context, Offset position) {
+    final view = View.maybeOf(context);
+    if (view == null) return false;
+
+    final result = HitTestResult();
+    WidgetsBinding.instance.hitTestInView(result, position, view.viewId);
+
+    var presses = 0;
+    for (final entry in result.path) {
+      final target = entry.target;
+      if (target is! RenderPointerListener) continue;
+      if (target.onPointerDown == null) continue;
+      presses++;
+    }
+    return presses > 1;
+  }
 
   @override
   State<TapSoundScope> createState() => _TapSoundScopeState();
@@ -169,43 +206,54 @@ class _TapSoundScopeState extends State<TapSoundScope> {
   Offset? _origin;
   Duration? _began;
 
-  void _down(PointerDownEvent e) {
-    if (_pointer != null) return;
-    _pointer = e.pointer;
-    _origin = e.position;
-    _began = e.timeStamp;
+  @override
+  void initState() {
+    super.initState();
+    GestureBinding.instance.pointerRouter.addGlobalRoute(_handlePointer);
   }
 
-  void _up(PointerEvent e) {
+  @override
+  void dispose() {
+    GestureBinding.instance.pointerRouter.removeGlobalRoute(_handlePointer);
+    super.dispose();
+  }
+
+  void _handlePointer(PointerEvent e) {
+    if (e is PointerDownEvent) {
+      if (_pointer != null) return;
+      _pointer = e.pointer;
+      _origin = e.position;
+      _began = e.timeStamp;
+      return;
+    }
+
     if (e.pointer != _pointer) return;
+    if (e is PointerCancelEvent) {
+      _clear();
+      return;
+    }
+    if (e is! PointerUpEvent) return;
+
     final origin = _origin;
     final began = _began;
-    _pointer = null;
-    _origin = null;
-    _began = null;
+    _clear();
     if (origin == null || began == null) return;
 
     final moved = (e.position - origin).distance;
     final held = e.timeStamp - began;
-    if (moved <= _maxSlop && held <= _maxDuration) {
+    if (moved <= _maxSlop &&
+        held <= _maxDuration &&
+        TapSoundScope.hitsControl(context, e.position)) {
       UiSounds.instance.click();
     }
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return Listener(
-      behavior: HitTestBehavior.translucent,
-      onPointerDown: _down,
-      onPointerUp: _up,
-      onPointerCancel: (e) {
-        if (e.pointer == _pointer) {
-          _pointer = null;
-          _origin = null;
-          _began = null;
-        }
-      },
-      child: widget.child,
-    );
+  void _clear() {
+    _pointer = null;
+    _origin = null;
+    _began = null;
   }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
 }
