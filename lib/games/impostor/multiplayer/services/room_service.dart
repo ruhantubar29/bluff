@@ -4,6 +4,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../logic/impostor_round_generator.dart';
+import '../../logic/vote_tally.dart';
 import '../../logic/word_deck.dart';
 import '../../models/impostor_player.dart';
 import '../../models/impostor_settings.dart';
@@ -583,7 +584,11 @@ class RoomService {
 
     final order = List<String>.from(d['playerOrder'] ?? ids);
     final pos = {for (var i = 0; i < order.length; i++) order[i]: i};
-    final ranked = counts.entries.toList()
+    // Everyone is ranked, including players who drew no votes, so a
+    // tie sitting on the accusation boundary is always visible.
+    final ranked = [
+      for (final id in ids) MapEntry(id, counts[id] ?? 0),
+    ]
       ..sort((a, b) {
         final c = b.value.compareTo(a.value);
         return c != 0
@@ -595,7 +600,20 @@ class RoomService {
     final accused = <String>{};
     var draw = false;
     if (!random) {
-      accused.addAll(ranked.take(need).map((e) => e.key));
+      // A tie across the boundary can't be settled by votes, and
+      // breaking it by lobby order would hand the round to whoever
+      // happened to join first.
+      final tiedAtCutoff = accusationIsTied(
+        votesDescending: [
+          for (final e in ranked) e.value,
+        ],
+        slots: need,
+      );
+      if (tiedAtCutoff) {
+        draw = true;
+      } else {
+        accused.addAll(ranked.take(need).map((e) => e.key));
+      }
     } else {
       final maj = ids.length ~/ 2 + 1;
       final cand =
@@ -617,19 +635,6 @@ class RoomService {
     final playersWon =
         !draw && accused.length == imps.length && accused.containsAll(imps);
 
-    // Impostors who were only caught because of a tie at the cutoff
-    final tie = <String>{};
-    if (!random && need > 0 && ranked.length >= need) {
-      final cutoff = ranked[need - 1].value;
-      for (final e in ranked) {
-        if (e.value == cutoff &&
-            imps.contains(e.key) &&
-            accused.contains(e.key)) {
-          tie.add(e.key);
-        }
-      }
-    }
-
     // Scores
     final earned = {for (final id in ids) id: 0};
     void add(String id, int n) => earned[id] = (earned[id] ?? 0) + n;
@@ -642,10 +647,11 @@ class RoomService {
         add(v, a.fold<int>(0, (sum, t) => sum + (imps.contains(t) ? 5 : -1)));
       });
       for (final i in imps) {
-        if (!accused.contains(i)) {
-          add(i, 10);
-        } else if (tie.contains(i)) {
+        // Draw = +5, escaped = +10, caught in a settled vote = 0.
+        if (draw) {
           add(i, 5);
+        } else if (!accused.contains(i)) {
+          add(i, 10);
         }
       }
     }
@@ -668,7 +674,6 @@ class RoomService {
         'actualImpostorIds': imps.toList(),
         'roundScores': earned,
         'totalScores': totals,
-        'tieCaughtImpostorIds': tie.toList(),
       },
       'votesSubmitted': docs.length,
     });

@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+import '../logic/vote_tally.dart';
 import '../models/impostor_player.dart';
 import '../models/impostor_round.dart';
 
@@ -90,9 +91,9 @@ class _VoteScreenState extends State<VoteScreen>
       _startingScores[i] = round.players[i].score;
     }
 
+    // Players vote in seat order, player 1 through to the last.
     _votingOrder =
-        List<int>.generate(voterCount, (index) => index)
-          ..shuffle(math.Random());
+        List<int>.generate(voterCount, (index) => index);
 
     _pageController = AnimationController(
       vsync: this,
@@ -264,6 +265,27 @@ class _VoteScreenState extends State<VoteScreen>
         return a.key.compareTo(b.key);
       });
 
+    /*
+     * A tie that straddles the accusation boundary means the
+     * top-N cannot be settled by votes alone. Deciding it by
+     * seat order would hand the round to whoever happens to be
+     * listed first, so the round is called a draw instead.
+     */
+    final tiedAtCutoff = accusationIsTied(
+      votesDescending: [
+        for (final entry in sorted)
+          _voteCounts[entry.key] ?? 0,
+      ],
+      slots: requiredVotes,
+    );
+
+    if (tiedAtCutoff) {
+      _finalAccusation = [];
+      _playersWon = false;
+      _finalResultIsDraw = true;
+      return;
+    }
+
     _finalAccusation = sorted
         .take(requiredVotes)
         .map((entry) => entry.key)
@@ -386,14 +408,11 @@ class _VoteScreenState extends State<VoteScreen>
      *   +5 for each actual impostor they correctly accuse.
      *   -1 for each innocent player they accuse.
      *
+     *   These hold on a draw too — a correct pick is still
+     *   correct even when nobody ends up accused.
+     *
      * Impostors:
      *   0 from their own voting choices.
-     *
-     * In addition:
-     *   An impostor who escapes the final accusation gets +10.
-     *
-     *   If the final accusation contains an impostor through a
-     *   tied result, that impostor receives +5 instead.
      */
 
     for (final entry in _votesByVoter.entries) {
@@ -420,128 +439,26 @@ class _VoteScreenState extends State<VoteScreen>
     }
 
     /*
-     * Add the impostor survival points.
+     * Impostor bonus:
+     *   Round ended in a draw          = +5
+     *   Escaped a settled accusation   = +10
+     *   Caught in a settled accusation = 0
      *
-     * If an impostor is in the final accusation, they were caught.
-     * Otherwise they escaped.
+     * Voter points above are unaffected by the draw: a correct
+     * pick still pays +5 and a wrong one still costs -1.
      */
     for (final impostorIndex in actualImpostors) {
-      if (_finalAccusation.contains(impostorIndex)) {
-        continue;
+      if (_finalResultIsDraw) {
+        _roundScores[impostorIndex] =
+            (_roundScores[impostorIndex] ?? 0) + 5;
+      } else if (!_finalAccusation
+          .contains(impostorIndex)) {
+        _roundScores[impostorIndex] =
+            (_roundScores[impostorIndex] ?? 0) + 10;
       }
-
-      _roundScores[impostorIndex] =
-          (_roundScores[impostorIndex] ?? 0) + 10;
     }
-
-    /*
-     * Tie handling.
-     *
-     * If an impostor shares the highest vote count with another
-     * player at the accusation boundary, they receive +5 instead
-     * of the normal +10 escape bonus.
-     */
-    final tiedImpostors =
-        _findImpostorsCaughtByTie(actualImpostors);
-
-    for (final impostorIndex in tiedImpostors) {
-      _roundScores[impostorIndex] =
-          (_roundScores[impostorIndex] ?? 0) + 5;
-    }
-
-    /*
-     * Correct voters in a tied accusation still receive their
-     * normal +5 for correctly selecting an impostor.
-     *
-     * No additional tie bonus is added to avoid double counting.
-     */
 
     _applyRoundScores();
-  }
-
-  Set<int> _findImpostorsCaughtByTie(
-    Set<int> actualImpostors,
-  ) {
-    final tiedImpostors = <int>{};
-
-    if (requiredVotes <= 0) {
-      return tiedImpostors;
-    }
-
-    final sorted = round.players.asMap().entries.toList()
-      ..sort((a, b) {
-        final aVotes = _voteCounts[a.key] ?? 0;
-        final bVotes = _voteCounts[b.key] ?? 0;
-
-        final comparison =
-            bVotes.compareTo(aVotes);
-
-        if (comparison != 0) {
-          return comparison;
-        }
-
-        return a.key.compareTo(b.key);
-      });
-
-    if (sorted.isEmpty ||
-        requiredVotes > sorted.length) {
-      return tiedImpostors;
-    }
-
-    final boundaryVotes =
-        _voteCounts[sorted[requiredVotes - 1].key] ?? 0;
-
-    final boundaryIndexes = sorted
-        .where(
-          (entry) =>
-              (_voteCounts[entry.key] ?? 0) ==
-              boundaryVotes,
-        )
-        .map((entry) => entry.key)
-        .toSet();
-
-    /*
-     * There is a tie at the cutoff when more candidates have the
-     * boundary vote count than there are remaining accusation slots.
-     */
-    final beforeBoundary = sorted
-        .take(requiredVotes - 1)
-        .map((entry) => entry.key)
-        .toSet();
-
-    final boundaryTie =
-        boundaryIndexes.length > 1 &&
-        boundaryIndexes.any(
-          actualImpostors.contains,
-        ) &&
-        boundaryIndexes.any(
-          (index) =>
-              !beforeBoundary.contains(index),
-        );
-
-    if (!boundaryTie) {
-      return tiedImpostors;
-    }
-
-    for (final impostorIndex in actualImpostors) {
-      if (boundaryIndexes.contains(impostorIndex)) {
-        tiedImpostors.add(impostorIndex);
-      }
-    }
-
-    /*
-     * The impostor must have been selected as part of the final
-     * accusation to be considered "caught by tie".
-     */
-    tiedImpostors.removeWhere(
-      (index) => !_finalAccusation.contains(index),
-    );
-
-    /*
-     * The normal +10 escape bonus was not added above for caught
-     * impostors, so +5 here is their complete impostor bonus.
-     */
-    return tiedImpostors;
   }
 
   void _applyRoundScores() {
@@ -1047,6 +964,12 @@ class _VoteScreenState extends State<VoteScreen>
   }
 
   String _buildResultSubtitle() {
+    if (_finalResultIsDraw) {
+      return isRandomMode
+          ? 'Nobody reached a majority, so nobody was accused.'
+          : 'The vote was tied, so nobody was accused.';
+    }
+
     if (isRandomMode) {
       if (_finalAccusation.isEmpty) {
         return 'The final accusation was NONE.';
