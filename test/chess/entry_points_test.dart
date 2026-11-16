@@ -72,7 +72,8 @@ void main() {
     expect(find.byType(GameCard), findsWidgets);
 
     if (kChessEnabled) {
-      expect(find.byIcon(Icons.star_border_rounded), findsNWidgets(2));
+      // Perfect Circle, CHESS and Guess The Flag all ship as playable tiles.
+      expect(find.byIcon(Icons.star_border_rounded), findsNWidgets(3));
 
       // CHESS is the second available tile.
       await tester.tap(find.byType(GameCard).at(1));
@@ -83,10 +84,10 @@ void main() {
       expect(find.text('Play with Bot'), findsOneWidget);
       expect(find.text('Solve Puzzles'), findsOneWidget);
     } else {
-      // Chess is present but locked in COMING SOON: Perfect Circle is the
-      // only playable tile, padlocks mark the rest, and the chess flow
-      // stays unreachable even when a locked tile is tapped.
-      expect(find.byIcon(Icons.star_border_rounded), findsNWidgets(1));
+      // Chess is present but locked in COMING SOON: Perfect Circle and
+      // Guess The Flag are the playable tiles, padlocks mark the rest, and
+      // the chess flow stays unreachable even when a locked tile is tapped.
+      expect(find.byIcon(Icons.star_border_rounded), findsNWidgets(2));
 
       // The locked tiles live in the COMING SOON grid, below the fold.
       // Drag down until they materialise — the grid builds lazily, and every

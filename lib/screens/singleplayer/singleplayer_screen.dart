@@ -13,6 +13,7 @@ import '../../games/chess/singleplayer/singleplayer_home.dart';
 import '../../games/never_have_i_ever/screens/never_have_i_ever_screen.dart';
 import '../../games/charades/screens/charades_screen.dart';
 import '../../games/mafia/screens/mafia_screen.dart';
+import '../../games/guess_the_flag/screens/guess_the_flag_screen.dart';
 
 const _red = Color(0xffC62828);
 
@@ -122,6 +123,15 @@ class SingleplayerScreen extends StatelessWidget {
         description:
             'Survive the night against AI players.',
         isAvailable: false,
+      ),
+      _SingleplayerGame(
+        title: 'GUESS THE FLAG',
+        screen: const GuessTheFlagScreen(),
+        imagePath:
+            'assets/images/game_cards/guess_the_flag.jpeg',
+        description:
+            'Name the flag before the timer runs out.',
+        isAvailable: true,
       ),
     ];
 
