@@ -283,6 +283,7 @@ class _OnlineRoundScreenState extends State<OnlineRoundScreen> {
       isImpostor: imp,
       secretTitle: imp ? 'Impostor' : '${pd['secretWord'] ?? 'Unknown'}',
       secretHint: imp && hint.isNotEmpty ? hint : null,
+      secretCategory: imp ? null : pd['category'] as String?,
       characterAsset: 'assets/images/characters/character_${ch + 1}.png',
       onNext: done || _busy.contains('ready') ? () {} : _markReady,
       onClose: () => Navigator.of(context).maybePop(),

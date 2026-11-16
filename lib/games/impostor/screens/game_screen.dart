@@ -86,11 +86,12 @@ class _GameScreenState extends State<GameScreen> {
   void initState() {
     super.initState();
 
-    // Randomize the order in which players receive their secret.
+    // Players always receive their secret in seat order,
+    // player 1 through to the last player.
     revealOrder = List<int>.generate(
       round.players.length,
       (index) => index,
-    )..shuffle(math.Random());
+    );
 
     // Character indexes are loaded from the persistent
     // 35-character cycle.
@@ -228,6 +229,13 @@ class _GameScreenState extends State<GameScreen> {
       // IMPORTANT:
       // Only the impostor receives the hint.
       secretHint: isImpostor ? cleanHint : null,
+
+      // The category only disambiguates the word, so it goes
+      // to the players who actually see the word — not the
+      // impostor, who would gain nothing they can't already
+      // get from the hint.
+      secretCategory:
+          isImpostor ? null : round.category,
 
       characterAsset: _characterAsset(
         characterIndexes[playerIndex],
@@ -391,6 +399,7 @@ class RevealScreen extends StatefulWidget {
     this.onClose,
     this.title = 'Impostor',
     this.secretHint,
+    this.secretCategory,
     this.isImpostor = false,
     this.characterAsset,
     this.idleAnimation = true,
@@ -408,6 +417,10 @@ class RevealScreen extends StatefulWidget {
 
   final String secretTitle;
   final String? secretHint;
+
+  /// Category the secret word was drawn from, shown to
+  /// players who actually see the word.
+  final String? secretCategory;
 
   final bool isImpostor;
 
@@ -462,8 +475,10 @@ class _RevealScreenState extends State<RevealScreen>
       widget.playerIndex >= widget.total - 1;
 
   void _watchPeek() {
+    // Any lift at all counts as a peek, so the Next button
+    // shows the instant the card leaves its resting place.
     if (!_peeked &&
-        _reveal.value > 0.4 &&
+        _reveal.value > 0 &&
         mounted) {
       setState(() {
         _peeked = true;
@@ -644,6 +659,8 @@ class _RevealScreenState extends State<RevealScreen>
                                               .secretTitle,
                                           hint: widget
                                               .secretHint,
+                                          category: widget
+                                              .secretCategory,
                                           isImpostor: widget
                                               .isImpostor,
                                         ),
@@ -1074,11 +1091,13 @@ class _SecretPanel extends StatelessWidget {
   const _SecretPanel({
     required this.title,
     required this.hint,
+    required this.category,
     required this.isImpostor,
   });
 
   final String title;
   final String? hint;
+  final String? category;
   final bool isImpostor;
 
   @override
@@ -1124,6 +1143,30 @@ class _SecretPanel extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 10),
+            if (category != null &&
+                category!.trim().isNotEmpty) ...[
+              _SketchBox(
+                fill: _paper,
+                radius: 14,
+                strokeWidth: 3,
+                shadow: const Offset(3, 4),
+                seed: 17,
+                padding:
+                    const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 5,
+                ),
+                child: Text(
+                  category!.trim().toUpperCase(),
+                  textAlign: TextAlign.center,
+                  style: _t(
+                    19,
+                    color: textColor,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 10),
+            ],
             FittedBox(
               fit: BoxFit.scaleDown,
               child: Text(
