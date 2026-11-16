@@ -4,7 +4,6 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 
 import 'core/language/language_settings.dart';
-import 'core/sound/music_service.dart';
 import 'core/sound/sound_settings.dart';
 import 'core/sound/ui_sounds.dart';
 import 'core/theme/bluff_theme.dart';
@@ -28,10 +27,6 @@ Future<void> main() async {
   // instant. Never blocks startup.
   unawaited(UiSounds.instance.preload());
 
-  // Kick off the ambient music bed to match the saved volume (no-op when the
-  // music slider is at zero). Never blocks startup.
-  unawaited(MusicService.instance.syncWithSettings());
-
   runApp(const BluffApp());
 }
 
@@ -45,7 +40,8 @@ class BluffApp extends StatelessWidget {
       title: 'BLUFFᴮᴰ',
       theme: BluffTheme.light,
       home: const SplashScreen(),
-      // Above the Navigator, so every tap on any button, tile or row ticks.
+      // Above the Navigator: taps are checked against the widgets actually
+      // hit, so only buttons, tiles and options tick — blank space is silent.
       builder: (context, child) =>
           TapSoundScope(child: child ?? const SizedBox()),
     );

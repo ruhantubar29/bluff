@@ -3,7 +3,6 @@ import 'package:flutter/services.dart';
 
 import '../../../core/language/app_language.dart';
 import '../../../core/language/language_settings.dart';
-import '../../../core/sound/music_service.dart';
 import '../../../core/sound/sound_settings.dart';
 import '../../../core/theme/bluff_theme.dart';
 
@@ -29,7 +28,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
   AppLanguage _language = LanguageSettings.instance.language;
 
   double _sfx = SoundSettings.instance.sfxVolume;
-  double _music = SoundSettings.instance.musicVolume;
 
   Future<void> _changeLanguage(AppLanguage language) async {
     await LanguageSettings.instance.setLanguage(language);
@@ -42,12 +40,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _changeSfx(double value) async {
     setState(() => _sfx = value);
     await SoundSettings.instance.setSfxVolume(value);
-  }
-
-  Future<void> _changeMusic(double value) async {
-    setState(() => _music = value);
-    await SoundSettings.instance.setMusicVolume(value);
-    await MusicService.instance.syncWithSettings();
   }
 
   /// Small-caps section label used across the dark account area.
@@ -131,13 +123,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         label: _t('Sound effects', 'সাউন্ড ইফেক্ট'),
                         value: _sfx,
                         onChanged: _changeSfx,
-                      ),
-                      const Divider(height: 24),
-                      _volumeRow(
-                        icon: Icons.music_note_rounded,
-                        label: _t('Music', 'মিউজিক'),
-                        value: _music,
-                        onChanged: _changeMusic,
                       ),
                     ],
                   ),
