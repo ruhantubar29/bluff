@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 
 import '../../core/profile/profile.dart';
 import '../../core/profile/profile_repository.dart';
+import '../../core/update/force_update.dart';
 import '../home/home_screen.dart';
 import '../onboarding/onboarding_screen.dart';
+import '../update/force_update_screen.dart';
 
 const _dark = Color(0xff09090E);
 
@@ -13,6 +15,10 @@ const _dark = Color(0xff09090E);
 ///   Loading → Onboarding (language is its first step) → Home
 ///
 /// Returning players skip straight to Home.
+///
+/// While that runs, the installed version is compared against the latest
+/// release. An outdated build swaps the whole screen for [ForceUpdateScreen],
+/// which has no way past it.
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
 
@@ -21,10 +27,16 @@ class SplashScreen extends StatefulWidget {
 }
 
 class _SplashScreenState extends State<SplashScreen> {
+  /// Set once the version check proves this build is too old to keep running.
+  bool _updateRequired = false;
+
   @override
   void initState() {
     super.initState();
     _bootstrap();
+    // Deliberately not awaited: a slow or absent network must never hold up
+    // the normal boot path, and the wall only matters if the check lands.
+    _checkForUpdate();
   }
 
   Future<void> _bootstrap() async {
@@ -33,8 +45,15 @@ class _SplashScreenState extends State<SplashScreen> {
     if (mounted) setState(() {});
   }
 
+  Future<void> _checkForUpdate() async {
+    if (!await isUpdateRequired()) return;
+    if (mounted) setState(() => _updateRequired = true);
+  }
+
   @override
   Widget build(BuildContext context) {
+    if (_updateRequired) return const ForceUpdateScreen();
+
     switch (ProfileRepository.instance.startState) {
       case AppStartState.loading:
         return const _LoadingView();

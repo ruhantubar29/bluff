@@ -57,6 +57,7 @@ dependencies:
   stockfish:
     path: packages/stockfish
   web_socket_channel: ^3.0.3
+  url_launcher: ^6.3.3
 
 # Vendored plugin copies (identical Dart/native code to pub.dev; only their
 # android/build.gradle differs — the dead-branch legacy Kotlin Gradle Plugin
