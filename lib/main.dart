@@ -7,6 +7,7 @@ import 'core/language/language_settings.dart';
 import 'core/sound/sound_settings.dart';
 import 'core/sound/ui_sounds.dart';
 import 'core/theme/bluff_theme.dart';
+import 'core/update/update_gate.dart';
 import 'firebase_options.dart';
 import 'screens/splash/splash_screen.dart';
 
@@ -40,10 +41,16 @@ class BluffApp extends StatelessWidget {
       title: 'BLUFFᴮᴰ',
       theme: BluffTheme.light,
       home: const SplashScreen(),
-      // Above the Navigator: taps are checked against the widgets actually
-      // hit, so only buttons, tiles and options tick — blank space is silent.
-      builder: (context, child) =>
-          TapSoundScope(child: child ?? const SizedBox()),
+      // Lets the update prompt be raised from wherever the player happens to
+      // be, including from outside the route tree.
+      navigatorKey: appNavigatorKey,
+      // Above the Navigator, so both survive every screen change: taps are
+      // checked against the widgets actually hit, so only buttons, tiles and
+      // options tick — blank space is silent. The gate outlives the splash
+      // screen and keeps checking for a newer release while the app is open.
+      builder: (context, child) => UpdateGate(
+        child: TapSoundScope(child: child ?? const SizedBox()),
+      ),
     );
   }
 }
